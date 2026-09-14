@@ -1,0 +1,55 @@
+/* Responsive corrections shared by the existing MKS screens. */
+.login-form-side, .login-card { min-width: 0; }
+.menu-backdrop { display: none; }
+body:has(.overlay) { overflow: hidden; }
+@media (max-width: 1000px) {
+  .side:not(.show) { visibility: hidden; }
+  body:has(.side.show) { overflow: hidden; }
+  .side.show { visibility: visible; z-index: 90; }
+  .menu-backdrop { display: block; position: fixed; inset: 0; z-index: 80; border: 0; background: #001e2b66; }
+  .side-brand { flex-shrink: 0; }
+  .side nav { overscroll-behavior: contain; }
+  .shell > main > header { padding: 10px 14px; gap: 10px; }
+  .shell header .crumb { display: none; }
+  .profile { min-width: 0; }
+  .login-page { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 650px) {
+  .login-page { padding: 24px 14px 60px; gap: 0; }
+  .login-card { padding: 24px 20px; }
+  .login-card h2 { white-space: normal; }
+  .login-field input, .field input, .field select, .field textarea,
+  .report-field input, .report-field select { font-size: 16px; }
+  .login-options { flex-wrap: wrap; gap: 8px; }
+  .login-options button, .login-options label { min-height: 40px; }
+  .login-card .welcome { font-size: 10px; right: 20px; }
+  .mobile-login-brand img { width: 120px; }
+  .mobile-login-brand small { font-size: 9px; }
+  .planning-hero { margin: -10px -10px 0; padding: 20px 14px; }
+  .planning-metrics strong { overflow-wrap: anywhere; }
+  .plan-actions { grid-template-columns: minmax(0, 1fr); }
+  .unit-list-head, .report-toolbar { flex-wrap: wrap; gap: 10px; }
+  .unit-tabs { display: flex; flex-wrap: wrap; width: 100%; }
+  .unit-tabs button { flex: 1; min-width: 52px; min-height: 40px; }
+  .tools { flex-wrap: wrap; gap: 8px; }
+  .tools label { display: flex; width: 100%; }
+  .tools button, .report-toolbar button, .pages button, .mini,
+  .hamb, .side-brand button, .sub button, .modal-title button { min-height: 40px; }
+  .tools label input, .unit-list-head input { min-width: 0; max-width: 100%; }
+  .summary { min-width: 0; width: 100%; table-layout: fixed; }
+  .summary th, .summary td { padding: 8px 3px; font-size: 11px; overflow-wrap: anywhere; }
+  .overlay { padding: 10px; align-items: flex-start; overflow-y: auto; }
+  .modal { min-width: 0; width: 100%; max-width: 100%; max-height: calc(100dvh - 20px); padding: 16px; }
+  .modal-title { justify-content: flex-start; padding-right: 36px; }
+  .modal-title h2 { font-size: 17px; overflow-wrap: anywhere; }
+  .modal .modal-close { position: static; display: block; margin: 20px 0 0 auto; min-height: 40px; }
+  .payment-save { min-width: 0; width: 100%; padding: 12px; }
+  .balances { flex-wrap: wrap; gap: 12px; }
+  .success-toast { left: 10px; right: 10px; max-width: none; }
+}
+@media (max-width: 360px) {
+  .profile-avatar { display: none; }
+  .login-card .welcome { display: none; }
+  .login-card h2 { font-size: 22px; }
+  .filter-heading { flex-wrap: wrap; }
+}
