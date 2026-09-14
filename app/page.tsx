@@ -143,7 +143,7 @@ const paymentTypes = [
   "NAKİT",
   "YARDIM TL",
 ];
-const currencyTypes = ["DOLAR", "EURO", "STERLİN"];
+const currencyTypes = ["TRY", "DOLAR", "EURO", "STERLİN"];
 const currencyCode = (currency: string) =>
   ({ DOLAR: "USD", EURO: "EUR", "STERLİN": "GBP" })[currency] ?? currency;
 const fmt = (n: number, c = "TRY") =>
@@ -953,7 +953,7 @@ function CashPage({
       rate: "0",
       amount: "0",
       paid: "0",
-      currency: "DOLAR",
+      currency: type === "currency" ? "DOLAR" : "TRY",
       targetCurrency: "EURO",
       note: "",
     }),
