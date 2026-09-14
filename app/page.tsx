@@ -132,7 +132,15 @@ const accounts = [
     reserved: 0,
   },
 ];
-const movementTypes = ["--Seçiniz--", "DOLAR", "EURO", "YEDİRENK"];
+const movementTypes = [
+  "--Seçiniz--",
+  "DOLAR",
+  "EURO",
+  "YEDİRENK",
+  "SERMAYE",
+  "EMANET",
+  "SERBEST BAĞIŞ",
+];
 const paymentTypes = [
   "--Seçiniz--",
   "AYNİ",
