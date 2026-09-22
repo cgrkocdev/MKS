@@ -13,3 +13,5 @@ dist/
 /mks-*.png
 /.DS_Store
 /Thumbs.db
+
+.vercel

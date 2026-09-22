@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import mksLogo from "../public/mks-logo-clean.png";
 import Reports, { reportTitles, type ReportPage } from "./reports";
+import { formatDate, TurkishDateInput } from "./date";
 import {
   ArrowRight,
   Banknote,
@@ -52,6 +53,7 @@ export type Row = {
   targetAmount?: number;
   targetCurrency?: string;
   planId?: number;
+  debtName?: string;
 };
 export type Plan = {
   lastPaidDate?: string;
@@ -60,7 +62,6 @@ export type Plan = {
   company: string;
   type: string;
   group: string;
-  invoice: string;
   invoiceDate: string;
   due: string;
   year: string;
@@ -88,6 +89,12 @@ export type PaymentUnit = {
 };
 const today = new Date().toLocaleDateString("sv-SE"),
   branch = "YEDİRENK DERNEĞİ (GENEL MERKEZ)";
+const isValidIsoDate = (value?: string) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(`${value}T00:00:00`);
+  return parsed.getFullYear() === year && parsed.getMonth() + 1 === month && parsed.getDate() === day;
+};
 const accounts = [
   {
     name: "Merkez Nakit Kasa",
@@ -111,31 +118,22 @@ const accounts = [
     reserved: 0,
   },
   {
-    name: "Dolar Kasa",
-    type: "DÖVİZ KASA",
+    name: "Dolar Nakit Kasa",
+    type: "NAKİT",
     currency: "USD",
     opening: 0,
     reserved: 0,
   },
   {
-    name: "Euro Kasa",
-    type: "DÖVİZ KASA",
+    name: "Euro Nakit Kasa",
+    type: "NAKİT",
     currency: "EUR",
-    opening: 0,
-    reserved: 0,
-  },
-  {
-    name: "Sterlin Kasa",
-    type: "DÖVİZ KASA",
-    currency: "GBP",
     opening: 0,
     reserved: 0,
   },
 ];
 const movementTypes = [
   "--Seçiniz--",
-  "DOLAR",
-  "EURO",
   "YEDİRENK",
   "SERMAYE",
   "EMANET",
@@ -143,31 +141,82 @@ const movementTypes = [
 ];
 const paymentTypes = [
   "--Seçiniz--",
-  "AYNİ",
+  "NAKİT",
   "BANKA",
   "ÇEK",
-  "DOLAR KASA",
-  "EURO KASA",
-  "NAKİT",
-  "YARDIM TL",
+  "SENET",
+  "KREDİ KARTI",
 ];
-const currencyTypes = ["TRY", "DOLAR", "EURO", "STERLİN"];
+const currencyTypes = ["TRY", "DOLAR", "EURO"];
 const currencyCode = (currency: string) =>
-  ({ DOLAR: "USD", EURO: "EUR", "STERLİN": "GBP" })[currency] ?? currency;
+  ({ DOLAR: "USD", EURO: "EUR" })[currency] ?? currency;
+const isSterling = (currency?: string) =>
+  currency === "GBP" || currency === "STERLİN";
 const fmt = (n: number, c = "TRY") =>
   new Intl.NumberFormat("tr-TR", {
     style: "currency",
     currency: currencyCode(c),
   }).format(n);
+function totalsByCurrency<T>(
+  items: T[],
+  amount: (item: T) => number,
+  currency: (item: T) => string,
+) {
+  const totals = new Map<string, number>();
+  items.forEach((item) => {
+    const code = currencyCode(currency(item));
+    totals.set(code, (totals.get(code) ?? 0) + amount(item));
+  });
+  return Array.from(totals, ([code, total]) => fmt(total, code)).join(" / ") || fmt(0);
+}
 const planStatus = (amount: number, paid: number) =>
   amount > 0 && paid >= amount ? "ÖDENDİ" : paid > 0 ? "KISMİ" : "ÖDENMEDİ";
+const outgoingCountries = [
+  "AFGANİSTAN",
+  "BANGLADEŞ",
+  "ÇAD",
+  "ETİYOPYA",
+  "FİLİSTİN",
+  "SERBEST",
+  "SOMALİ",
+  "TANZANYA",
+  "TÜRKİYE",
+  "UGANDA",
+  "YEMEN",
+];
+const partnerCatalog: Array<{
+  name: string;
+  country: string;
+  region: string;
+  status: PaymentUnit["status"];
+}> = [
+  { name: "YEDİRENK DERNEĞİ", country: "TÜRKİYE", region: "ANADOLU-1", status: "AKTİF" },
+  { name: "BERR GLOBAL", country: "UGANDA", region: "KAMPALA-1", status: "AKTİF" },
+  { name: "AFRİKA DAYANIŞMA AĞI", country: "SERBEST", region: "SAHRA-1", status: "PASİF" },
+  { name: "DAMAL", country: "SOMALİ", region: "MOGADİŞU-1", status: "AKTİF" },
+  { name: "MEWLANA", country: "BANGLADEŞ", region: "DAKKA-1", status: "AKTİF" },
+  { name: "HAKİD", country: "ETİYOPYA", region: "ADDİS ABABA-1", status: "AKTİF" },
+  { name: "KEDEV", country: "ÇAD", region: "ENCEMİNE-1", status: "AKTİF" },
+  { name: "İNSAN DERNEĞİ", country: "TANZANYA", region: "DARÜSSELAM-1", status: "AKTİF" },
+  { name: "GÜZEL ESER", country: "YEMEN", region: "SANA-1", status: "AKTİF" },
+  { name: "YAOUNDÉ DAYANIŞMA VAKFI", country: "SERBEST", region: "YAOUNDÉ-1", status: "PASİF" },
+  { name: "CHASM-E-OMİD", country: "AFGANİSTAN", region: "KABİL-1", status: "AKTİF" },
+  { name: "SENABİL", country: "FİLİSTİN", region: "GAZZE-1", status: "AKTİF" },
+  { name: "ŞAM İYİLİK VAKFI", country: "SERBEST", region: "İDLİB-1", status: "PASİF" },
+  { name: "ANADOLU YEDİRENK DERNEĞİ", country: "TÜRKİYE", region: "ANADOLU-1", status: "PASİF" },
+];
+const partnerNames = partnerCatalog.map((partner) => partner.name);
+const partnerNameAliases: Record<string, string> = {
+    "BERR GLOBAL UGANDA": "BERR GLOBAL",
+    "CHASHM-E-OMID CHARITY ORGANIZATION": "CHASM-E-OMİD",
+};
+const normalizePartnerName = (name: string) => partnerNameAliases[name] ?? name;
 const plansSeed: Plan[] = [
   {
     id: 1,
-    company: "BERR GLOBAL UGANDA",
+    company: "BERR GLOBAL",
     type: "SU KUYUSU",
     group: "ÇEŞMELİ",
-    invoice: "0",
     invoiceDate: "2026-07-31",
     due: "2026-07-31",
     year: "2026",
@@ -180,10 +229,9 @@ const plansSeed: Plan[] = [
   },
   {
     id: 2,
-    company: "BERR GLOBAL UGANDA",
+    company: "BERR GLOBAL",
     type: "SU KUYUSU",
     group: "TULUMBA",
-    invoice: "0",
     invoiceDate: "2026-07-31",
     due: "2026-07-31",
     year: "2026",
@@ -196,10 +244,9 @@ const plansSeed: Plan[] = [
   },
   {
     id: 3,
-    company: "BERR GLOBAL UGANDA",
+    company: "BERR GLOBAL",
     type: "KURBAN",
     group: "NAFİLE KURBAN",
-    invoice: "0",
     invoiceDate: "2026-06-30",
     due: "2026-06-30",
     year: "2026",
@@ -212,10 +259,9 @@ const plansSeed: Plan[] = [
   },
   {
     id: 4,
-    company: "CHASHM-E-OMID CHARITY ORGANIZATION",
+    company: "CHASM-E-OMİD",
     type: "KALICI ESERLER",
     group: "CAMİ İNŞAATI",
-    invoice: "0",
     invoiceDate: "2026-09-15",
     due: "2026-09-30",
     year: "2026",
@@ -228,96 +274,26 @@ const plansSeed: Plan[] = [
   },
 ];
 const rowsSeed: Row[] = [];
-const paymentUnitsSeed: PaymentUnit[] = [
-  {
-    id: 101,
-    scope: "Kampüs",
-    group: "AYNİ",
-    name: "SÜREYYA PARTNER",
-    branch,
-    country: "TÜRKİYE",
-    region: "GENEL MERKEZ",
-    phone: "+90 212 555 10 10",
-    status: "AKTİF",
-  },
-  {
-    id: 102,
-    scope: "Genel",
-    group: "AYNİ",
-    name: "TÜRKİYE PARTNER",
-    branch,
-    country: "TÜRKİYE",
-    region: "GENEL MERKEZ",
-    phone: "+90 212 555 20 20",
-    status: "AKTİF",
-  },
-  {
-    id: 103,
-    scope: "Proje",
-    group: "AYNİ",
-    name: "SERBEST FİLİSTİN",
-    branch,
-    country: "FİLİSTİN",
-    region: "GAZZE",
-    phone: "+970 59 555 30 30",
-    status: "AKTİF",
-  },
-  {
-    id: 104,
-    scope: "Kampüs",
-    group: "PARTNER",
-    name: "BERR GLOBAL UGANDA",
-    branch,
-    country: "UGANDA",
-    region: "KAMPALA",
-    phone: "+256 700 111 222",
-    status: "AKTİF",
-  },
-  {
-    id: 105,
-    scope: "Genel",
-    group: "PARTNER",
-    name: "CHASHM-E-OMID CHARITY ORGANIZATION",
-    branch,
-    country: "AFGANİSTAN",
-    region: "KABİL",
-    phone: "+93 700 333 444",
-    status: "AKTİF",
-  },
-  {
-    id: 106,
-    scope: "ÇBY",
-    group: "BURS",
-    name: "YEDİRENK ÖĞRENCİ BURSLARI",
-    branch,
-    country: "TÜRKİYE",
-    region: "İSTANBUL",
-    phone: "+90 212 555 40 40",
-    status: "AKTİF",
-  },
-  {
-    id: 107,
-    scope: "Kampüs",
-    group: "PERSONEL",
-    name: "MERKEZ PERSONEL BİRİMİ",
-    branch,
-    country: "TÜRKİYE",
-    region: "GENEL MERKEZ",
-    phone: "+90 212 555 50 50",
-    status: "AKTİF",
-  },
-  {
-    id: 108,
-    scope: "Proje",
-    group: "YETİM",
-    name: "YETİM DESTEK BİRİMİ",
-    branch,
-    country: "TÜRKİYE",
-    region: "GENEL MERKEZ",
-    phone: "+90 212 555 60 60",
-    status: "AKTİF",
-  },
-];
+const paymentUnitsSeed: PaymentUnit[] = partnerCatalog.map((partner, index) => ({
+  id: 101 + index,
+  scope: "Genel",
+  group: "PARTNER",
+  name: partner.name,
+  branch,
+  country: partner.country,
+  region: partner.region,
+  phone: "",
+  status: partner.status,
+}));
+const completePartnerUnits = (saved: unknown): PaymentUnit[] => {
+  const savedUnits = Array.isArray(saved) ? saved as PaymentUnit[] : [];
+  return paymentUnitsSeed.map((catalogUnit) => {
+    const stored = savedUnits.find((unit) => unit?.name === catalogUnit.name);
+    return stored
+      ? { ...stored, name: catalogUnit.name, group: "PARTNER", country: catalogUnit.country, region: catalogUnit.region }
+      : catalogUnit;
+  });
+};
 
 export default function Home() {
   const [page, setPage] = useState<Page>("home"),
@@ -338,20 +314,44 @@ export default function Home() {
     try {
       const savedRows = localStorage.getItem("mks-cash-rows");
       const savedPlans = localStorage.getItem("mks-payment-plans");
-      if (savedRows) setRows(JSON.parse(savedRows));
+      if (savedRows) {
+        const storedRows = JSON.parse(savedRows) as Row[];
+        setRows(
+          storedRows.filter(
+            (row) => !isSterling(row.currency) && !isSterling(row.targetCurrency),
+          ),
+        );
+      }
       if (savedPlans) {
         const storedPlans = JSON.parse(savedPlans) as Plan[];
+        const storedPaymentRows = savedRows ? JSON.parse(savedRows) as Row[] : [];
         setPlans(
           storedPlans.map((plan) => {
             const amount = Math.max(0, Number(plan.amount) || 0);
             const paid = Math.min(amount, Math.max(0, Number(plan.paid) || 0));
+            const transactionDate = storedPaymentRows
+              .filter((row) => row.planId === plan.id && isValidIsoDate(row.date))
+              .map((row) => row.date)
+              .sort()
+              .at(-1);
+            const inferredPaymentDate = paid > 0
+              ? transactionDate
+                ?? (isValidIsoDate(plan.lastPaidDate) ? plan.lastPaidDate : undefined)
+                ?? (isValidIsoDate(plan.invoiceDate) ? plan.invoiceDate : undefined)
+                ?? (isValidIsoDate(plan.due) ? plan.due : undefined)
+              : undefined;
             return {
               ...plan,
+              company: normalizePartnerName(plan.company),
               amount,
               paid,
+              lastPaidDate: inferredPaymentDate,
               payment: planStatus(amount, paid),
             };
-          }),
+          }).filter(
+            (plan) =>
+              partnerNames.includes(plan.company) && !isSterling(plan.currency),
+          ),
         );
       }
     } catch {
@@ -762,20 +762,14 @@ function title(p: Page) {
   )[p];
 }
 function Summary({ rows }: { rows: Row[] }) {
+  const [chartCurrency, setChartCurrency] = useState("TRY");
   const tableData = (currency: string) => {
-    const category = (payment: string) => payment === "BANKA" ? "BANKA"
-      : ["DOLAR KASA", "EURO KASA", "STERLİN KASA", "DÖVİZ KASA"].includes(payment)
-        ? (currency === "USD" ? "DOLAR KASA" : "DÖVİZ KASA") : "NAKİT";
-    const paymentTypes =
-      currency === "USD"
-        ? ["NAKİT", "BANKA", "DOLAR KASA"]
-        : ["NAKİT", "BANKA", "DÖVİZ KASA"];
-    return paymentTypes.map((paymentType) => {
+    const summaryPaymentTypes = ["NAKİT", "BANKA", "ÇEK", "SENET", "KREDİ KARTI"];
+    const category = (payment: string) =>
+      summaryPaymentTypes.includes(payment) ? payment : "NAKİT";
+    return summaryPaymentTypes.map((paymentType) => {
       const matchingAccounts = accounts.filter((account) => {
-        const accountType =
-          currency === "USD" && account.type === "DÖVİZ KASA"
-            ? "DOLAR KASA"
-            : account.type;
+        const accountType = account.type === "BANKA" ? "BANKA" : "NAKİT";
         return account.currency === currency && accountType === paymentType;
       });
       const accountNames = new Set(
@@ -823,7 +817,7 @@ function Summary({ rows }: { rows: Row[] }) {
       };
     });
   };
-  const currencySummaries = ["TRY", "USD", "EUR", "GBP"].map((currency) => {
+  const currencySummaries = ["TRY", "USD", "EUR"].map((currency) => {
     const data = tableData(currency);
     const totals = data.reduce(
       (result, item) => ({
@@ -833,8 +827,66 @@ function Summary({ rows }: { rows: Row[] }) {
       }),
       { income: 0, expense: 0, balance: 0 },
     );
-    return { currency, data, totals };
+    const availableBalance = data
+      .filter((item) => item.paymentType === "NAKİT" || item.paymentType === "BANKA")
+      .reduce((total, item) => total + item.balance, 0);
+    return { currency, data, totals, availableBalance };
   });
+  const selectedSummary = currencySummaries.find(
+    (summary) => summary.currency === chartCurrency,
+  ) ?? currencySummaries[0];
+  const chartColors = ["#10b981", "#2563eb", "#f59e0b", "#8b5cf6", "#ec4899"];
+  const distributionTotal = selectedSummary.data.reduce(
+    (total, item) => total + Math.max(0, item.balance),
+    0,
+  );
+  let distributionOffset = 0;
+  const distributionGradient = distributionTotal > 0
+    ? `conic-gradient(${selectedSummary.data.map((item, index) => {
+        const start = distributionOffset;
+        distributionOffset += Math.max(0, item.balance) / distributionTotal * 100;
+        return `${chartColors[index]} ${start}% ${distributionOffset}%`;
+      }).join(", ")})`
+    : chartCurrency === "EUR" ? "#2563eb" : "#e5e7eb";
+  const monthLabels = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"];
+  let runningBalance = 0;
+  const monthlyFlow = monthLabels.map((month, index) => {
+    const monthCode = String(index + 1).padStart(2, "0");
+    const monthRows = rows.filter((row) => row.date.slice(0, 7) === `${today.slice(0, 4)}-${monthCode}`);
+    let income = 0;
+    let expense = 0;
+    monthRows.forEach((row) => {
+      if (row.movement === "VİRMAN") {
+        if (currencyCode(row.targetCurrency ?? "") === chartCurrency) income += row.targetAmount ?? 0;
+        if (currencyCode(row.currency) === chartCurrency) expense += row.amount;
+      } else if (currencyCode(row.currency) === chartCurrency) {
+        if (row.movement === "ÇIKIŞ") expense += row.amount;
+        else income += row.amount;
+      }
+    });
+    runningBalance += income - expense;
+    return { month, income, expense, balance: runningBalance };
+  });
+  const trendValues = monthlyFlow.flatMap((item) => [item.income, item.expense, item.balance]);
+  const trendMin = Math.min(0, ...trendValues);
+  const trendMax = Math.max(1, ...trendValues);
+  const trendRange = trendMax - trendMin || 1;
+  const trendPoints = (key: "income" | "expense" | "balance") =>
+    monthlyFlow.map((item, index) => {
+      const x = 60 + index * 80;
+      const y = 190 - (item[key] - trendMin) / trendRange * 145;
+      return `${x},${y}`;
+    }).join(" ");
+  const trendY = (value: number) => 190 - (value - trendMin) / trendRange * 145;
+  const axisTicks = Array.from({ length: 5 }, (_, index) => trendMax - trendRange / 4 * index);
+  const yearlyIncome = monthlyFlow.reduce((sum, item) => sum + item.income, 0);
+  const yearlyExpense = monthlyFlow.reduce((sum, item) => sum + item.expense, 0);
+  const highestIncomeMonth = monthlyFlow.reduce((best, item) => item.income > best.income ? item : best, monthlyFlow[0]);
+  const highestExpenseMonth = monthlyFlow.reduce((best, item) => item.expense > best.expense ? item : best, monthlyFlow[0]);
+  const cashBalance = selectedSummary.data.find((item) => item.paymentType === "NAKİT")?.balance ?? 0;
+  const cashRatio = selectedSummary.totals.balance > 0
+    ? Math.max(0, Math.round(cashBalance / selectedSummary.totals.balance * 100))
+    : 0;
   return (
     <section className="general-cash-panel">
       <div className="general-cash-title">
@@ -843,14 +895,14 @@ function Summary({ rows }: { rows: Row[] }) {
           <h2>Genel Kasa Durumu</h2>
           <p>TL ve döviz hesaplarının gelir, gider ve kalan bakiye özeti</p>
         </div>
-        <small>Son güncelleme: {today.split("-").reverse().join(".")}</small>
+        <small>Son güncelleme: {formatDate(today)}</small>
       </div>
       <div className="summary-card general-cash-summary">
-        {currencySummaries.map(({ currency, data, totals }) => (
+        {currencySummaries.map(({ currency, data, totals, availableBalance }) => (
             <div className="summary-block" key={currency}>
               <div className="currency-heading">
-                <span>{{ TRY: "₺", USD: "$", EUR: "€", GBP: "£" }[currency]}</span>
-                <div><b>{{ TRY: "Türk Lirası Kasası", USD: "Dolar Kasası", EUR: "Euro Kasası", GBP: "Sterlin Kasası" }[currency]}</b><small>{currency}</small></div>
+                <span>{{ TRY: "₺", USD: "$", EUR: "€" }[currency]}</span>
+                <div><b>{{ TRY: "Türk Lirası Kasası", USD: "Dolar Kasası", EUR: "Euro Kasası" }[currency]}</b><small>{currency}</small></div>
               </div>
               <table className="summary">
                 <thead>
@@ -870,20 +922,84 @@ function Summary({ rows }: { rows: Row[] }) {
                       <td>{fmt(item.balance, currency)}</td>
                     </tr>
                   ))}
-                  <tr className="total">
-                    <td>TOPLAM</td>
+                </tbody>
+                <tfoot className="summary-totals">
+                  <tr>
+                    <td>GENEL TOPLAM</td>
                     <td>{fmt(totals.income, currency)}</td>
                     <td>{fmt(totals.expense, currency)}</td>
                     <td>{fmt(totals.balance, currency)}</td>
                   </tr>
-                </tbody>
+                  <tr className="available-total">
+                    <td colSpan={3}>KULLANILABİLİR BAKİYE (NAKİT + BANKA)</td>
+                    <td>{fmt(availableBalance, currency)}</td>
+                  </tr>
+                </tfoot>
               </table>
-              <div className="cash-total">
-                KASA TOPLAM ({currency}):{" "}
-                <strong>{fmt(totals.balance, currency)}</strong>
-              </div>
             </div>
         ))}
+        <div className="summary-block cash-insight-card">
+          <div className="chart-heading">
+            <span><BarChart3 /></span>
+            <div>
+              <b>Kasa Dağılımı</b>
+              <small>Eldeki bakiyenin ödeme türlerine dağılımı</small>
+            </div>
+          </div>
+          <div className="chart-currency-tabs">
+            {["TRY", "USD", "EUR"].map((currency) => (
+              <button key={currency} className={chartCurrency === currency ? "active" : ""} onClick={() => setChartCurrency(currency)}>{currency}</button>
+            ))}
+          </div>
+          <div className="donut-layout">
+            <div className="donut-chart" style={{ background: distributionGradient }}>
+              <div><small>ELDEKİ</small><strong>{fmt(selectedSummary.totals.balance, chartCurrency)}</strong></div>
+            </div>
+            <div className="donut-details">
+              {selectedSummary.data.map((item, index) => (
+                <div key={item.paymentType}>
+                  <i style={{ background: chartColors[index] }} />
+                  <span>{item.paymentType}<small>{distributionTotal > 0 ? `%${Math.round(Math.max(0, item.balance) / distributionTotal * 100)}` : "%0"}</small></span>
+                  <strong>{fmt(item.balance, chartCurrency)}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="chart-kpis">
+            <div><small>TOPLAM ALINAN</small><strong>{fmt(selectedSummary.totals.income, chartCurrency)}</strong></div>
+            <div><small>TOPLAM VERİLEN</small><strong>{fmt(selectedSummary.totals.expense, chartCurrency)}</strong></div>
+            <div><small>KULLANILABİLİR</small><strong>{fmt(selectedSummary.availableBalance, chartCurrency)}</strong></div>
+          </div>
+        </div>
+        <div className="summary-block cash-trend-chart">
+          <div className="trend-header">
+            <div><b>{chartCurrency} Aylık Finansal Hareket</b><small>{today.slice(0, 4)} yılı gelir, gider ve net bakiye eğilimi</small></div>
+            <div className="trend-legend"><span className="income">Gelir</span><span className="expense">Gider</span><span className="balance">Net bakiye</span></div>
+          </div>
+          <svg viewBox="0 0 1000 225" role="img" aria-label={`${chartCurrency} aylık gelir gider ve bakiye grafiği`}>
+            {[45, 81, 117, 153, 189].map((y, index) => <g key={y}><line x1="58" y1={y} x2="950" y2={y} className="grid-line" /><text x="52" y={y + 3} textAnchor="end" className="axis-value">{Intl.NumberFormat("tr-TR", { notation: "compact", maximumFractionDigits: 1 }).format(axisTicks[index])}</text></g>)}
+            <polyline points={trendPoints("income")} className="trend-income" />
+            <polyline points={trendPoints("expense")} className="trend-expense" />
+            <polyline points={trendPoints("balance")} className="trend-balance" />
+            {monthlyFlow.flatMap((item, index) => ([
+              <circle key={`income-${item.month}`} cx={60 + index * 80} cy={trendY(item.income)} r="4" className="trend-dot income-dot"><title>{`${item.month} gelir: ${fmt(item.income, chartCurrency)}`}</title></circle>,
+              <circle key={`expense-${item.month}`} cx={60 + index * 80} cy={trendY(item.expense)} r="4" className="trend-dot expense-dot"><title>{`${item.month} gider: ${fmt(item.expense, chartCurrency)}`}</title></circle>,
+              <circle key={`balance-${item.month}`} cx={60 + index * 80} cy={trendY(item.balance)} r="4" className="trend-dot balance-dot"><title>{`${item.month} net: ${fmt(item.balance, chartCurrency)}`}</title></circle>,
+            ]))}
+            {monthlyFlow.map((item, index) => <text key={item.month} x={60 + index * 80} y="216" textAnchor="middle">{item.month}</text>)}
+          </svg>
+          <div className="trend-summary">
+            <span>Yıllık gelir <b>{fmt(yearlyIncome, chartCurrency)}</b></span>
+            <span>Yıllık gider <b>{fmt(yearlyExpense, chartCurrency)}</b></span>
+            <span>Net hareket <b>{fmt(runningBalance, chartCurrency)}</b></span>
+          </div>
+          <div className="financial-insights">
+            <div><small>EN YÜKSEK GELİR AYI</small><b>{highestIncomeMonth.month}</b><strong>{fmt(highestIncomeMonth.income, chartCurrency)}</strong></div>
+            <div><small>EN YÜKSEK GİDER AYI</small><b>{highestExpenseMonth.month}</b><strong>{fmt(highestExpenseMonth.expense, chartCurrency)}</strong></div>
+            <div><small>NAKİT ORANI</small><b>%{cashRatio}</b><strong>Toplam bakiyedeki payı</strong></div>
+            <div className={runningBalance >= 0 ? "positive" : "negative"}><small>YILLIK DURUM</small><b>{runningBalance >= 0 ? "KÂR" : "ZARAR"}</b><strong>{fmt(runningBalance, chartCurrency)}</strong></div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -891,51 +1007,97 @@ function Summary({ rows }: { rows: Row[] }) {
 
 function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay: (plan: Plan) => void }) {
   const [units, setUnits] = useState(paymentUnitsSeed);
-  const [group, setGroup] = useState("PARTNER");
-  const [company, setCompany] = useState("");
+  const emptyQuery = {
+    company: "TÜMÜ",
+    year: "TÜMÜ",
+    month: "TÜMÜ",
+    currency: "TÜMÜ",
+    status: "TÜMÜ",
+    startDate: "",
+    endDate: "",
+  };
+  const [query, setQuery] = useState(emptyQuery);
+  const [appliedQuery, setAppliedQuery] = useState<typeof emptyQuery | null>(null);
+  const [tableCurrency, setTableCurrency] = useState("TÜMÜ");
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("mks-payment-units") ?? "null");
-      if (Array.isArray(saved)) setUnits(saved);
+      if (localStorage.getItem("mks-payment-units-version") === "partner-catalog-2026-09-16") {
+        const saved = JSON.parse(localStorage.getItem("mks-payment-units") ?? "null");
+        setUnits(completePartnerUnits(saved));
+      }
     } catch { /* Use the existing company list when storage cannot be read. */ }
   }, []);
-  const planGroup = (plan: Plan) => units.find((unit) => unit.name === plan.company)?.group ?? plan.type;
-  const groups = Array.from(new Set([...units.map((unit) => unit.group), ...plans.map(planGroup)]));
-  const companies = Array.from(new Set([
-    ...units.filter((unit) => unit.group === group).map((unit) => unit.name),
-    ...plans.filter((plan) => planGroup(plan) === group).map((plan) => plan.company),
-  ]));
-  const selectedCompany = companies.includes(company) ? company : companies[0] ?? "";
-  const visible = plans.filter((plan) => plan.company === selectedCompany && planGroup(plan) === group)
-    .sort((a, b) => b.due.localeCompare(a.due));
-  const dateText = (value?: string) => value ? value.split("-").reverse().join(".") : "—";
+  const companies = [...partnerNames].sort((a, b) => a.localeCompare(b, "tr-TR"));
+  const options = (values: string[]) => ["TÜMÜ", ...Array.from(new Set(values.filter(Boolean))).sort()];
+  const updateQuery = (key: keyof typeof emptyQuery, value: string) => setQuery((current) => ({ ...current, [key]: value }));
+  const visible = appliedQuery ? plans.filter((plan) => {
+    const status = planStatus(plan.amount, plan.paid);
+    return (appliedQuery.company === "TÜMÜ" || plan.company === appliedQuery.company)
+      && (appliedQuery.year === "TÜMÜ" || plan.year === appliedQuery.year)
+      && (appliedQuery.month === "TÜMÜ" || plan.month === appliedQuery.month)
+      && (appliedQuery.currency === "TÜMÜ" || plan.currency === appliedQuery.currency)
+      && (appliedQuery.status === "TÜMÜ" || status === appliedQuery.status)
+      && (!appliedQuery.startDate || plan.due >= appliedQuery.startDate)
+      && (!appliedQuery.endDate || plan.due <= appliedQuery.endDate);
+  }).sort((a, b) => b.due.localeCompare(a.due)) : [];
+  const currencyVisible = visible.filter(
+    (plan) => tableCurrency === "TÜMÜ" || currencyCode(plan.currency) === tableCurrency,
+  );
   return (
     <section className="cash-out-panel">
-      <h2>Kasa Çıkış</h2>
-      <div className="cash-out-filters">
-        <Field l="ŞUBE"><div className="fixed-value">{branch}</div></Field>
-        <Field l="PLANLANAN GRUP"><Select v={group} set={(value) => { setGroup(value); setCompany(""); }} o={groups} /></Field>
-        <Field l="ÖDEME YAPILACAK FİRMA SEÇİN"><Select v={selectedCompany} set={setCompany} o={companies.length ? companies : ["Bu grupta firma yok"]} /></Field>
+      <div className="cash-out-heading">
+        <div><span>KASA ÇIKIŞ</span><h2>Ödeme Planı Sorgulama</h2><p>Ödeme yapılacak firmaları ve planları tablo alanlarına göre sorgulayın.</p></div>
+        <div className="cash-out-result-badge"><Search /><span>{appliedQuery ? `${currencyVisible.length} sonuç` : "Sorgu bekleniyor"}</span></div>
       </div>
-      <p className="cash-out-hint">Ödeme yapmak istediğiniz firmayı seçiniz.</p>
+      <div className="cash-out-query-card">
+        <div className="cash-out-query-title"><Filter /><div><b>Sorgu Kriterleri</b><small>Bir veya birden fazla alan seçebilirsiniz.</small></div></div>
+        <div className="cash-out-filters">
+          <Field l="ŞUBE"><div className="fixed-value">{branch}</div></Field>
+          <Field l="ÖDEME YAPILACAK FİRMA"><Select v={query.company} set={(value) => updateQuery("company", value)} o={["TÜMÜ", ...companies]} /></Field>
+          <Field l="YIL"><Select v={query.year} set={(value) => updateQuery("year", value)} o={options(plans.map((plan) => plan.year))} /></Field>
+          <Field l="AY"><Select v={query.month} set={(value) => updateQuery("month", value)} o={options(plans.map((plan) => plan.month))} /></Field>
+          <Field l="PARA BİRİMİ"><Select v={query.currency} set={(value) => updateQuery("currency", value)} o={options(plans.map((plan) => plan.currency))} /></Field>
+          <Field l="ÖDEME DURUMU"><Select v={query.status} set={(value) => updateQuery("status", value)} o={["TÜMÜ", "ÖDENMEDİ", "KISMİ", "ÖDENDİ"]} /></Field>
+          <Field l="SON ÖDEME BAŞLANGIÇ"><TurkishDateInput value={query.startDate} setValue={(value) => updateQuery("startDate", value)} /></Field>
+          <Field l="SON ÖDEME BİTİŞ"><TurkishDateInput value={query.endDate} setValue={(value) => updateQuery("endDate", value)} /></Field>
+        </div>
+        <div className="cash-out-query-actions">
+          <button className="cash-out-clear" onClick={() => { setQuery(emptyQuery); setAppliedQuery(null); }}>Filtreleri Temizle</button>
+          <button className="cash-out-search" onClick={() => setAppliedQuery({ ...query })}><Search /> Sorgula</button>
+        </div>
+      </div>
+      <div className="table-currency-filter">
+        <div><b>PARA BİRİMİNE GÖRE LİSTELE</b><small>Tablo ve toplamlar seçilen para birimine göre güncellenir.</small></div>
+        <Select v={tableCurrency} set={setTableCurrency} o={["TÜMÜ", "TRY", "USD", "EUR"]} />
+      </div>
       <div className="cash-out-table-wrap">
         <table className="cash-out-table">
-          <thead><tr>{["İşlem", "Fatura", "Maaş", "Tür", "Grup", "Son Ödeme Tarihi", "Ödenen Tarih", "Yıl", "Ay", "Tutar", "Ödenen", "Kalan", "Durum"].map((label) => <th key={label}>{label}</th>)}</tr></thead>
-          <tbody>{visible.length ? visible.map((plan) => {
+          <thead><tr>{["İşlem", "Son Ödeme Tarihi", "Ödenen Tarih", "Yıl", "Ay", "Tutar", "Ödenen", "Kalan", "Durum"].map((label) => <th key={label}>{label}</th>)}</tr></thead>
+          <tbody>{currencyVisible.length ? currencyVisible.map((plan) => {
             const remaining = Math.max(0, Math.round((plan.amount - plan.paid) * 100) / 100);
             const paid = planStatus(plan.amount, plan.paid) === "ÖDENDİ";
-            const lastPayment = rows.filter((row) => row.planId === plan.id).map((row) => row.date).sort().at(-1) ?? plan.lastPaidDate;
+            const transactionDate = rows
+              .filter((row) => row.planId === plan.id && isValidIsoDate(row.date))
+              .map((row) => row.date)
+              .sort()
+              .at(-1);
+            const lastPayment = plan.paid > 0
+              ? transactionDate
+                ?? (isValidIsoDate(plan.lastPaidDate) ? plan.lastPaidDate : undefined)
+                ?? (isValidIsoDate(plan.invoiceDate) ? plan.invoiceDate : undefined)
+                ?? (isValidIsoDate(plan.due) ? plan.due : undefined)
+              : undefined;
             return <tr key={plan.id}>
               <td><button className="cash-out-pay" disabled={paid || remaining <= 0} title={paid ? "Bu ödeme tamamlandı" : "Ödeme formunu aç"} onClick={() => { if (!paid && remaining > 0) openPay(plan); }}>Ödeme Yap »</button></td>
-              <td>{plan.invoice || "—"}</td><td>{plan.salary || "—"}</td><td>{plan.type}</td><td>{plan.group}</td>
-              <td>{dateText(plan.due)}</td><td>{dateText(lastPayment)}</td><td>{plan.year}</td><td>{plan.month}</td>
+              <td>{formatDate(plan.due)}</td><td>{formatDate(lastPayment) || "—"}</td><td>{plan.year}</td><td>{plan.month}</td>
               <td>{fmt(plan.amount, plan.currency)}</td><td>{fmt(plan.paid, plan.currency)}</td><td>{fmt(remaining, plan.currency)}</td>
               <td><span className={paid ? "payment-state paid" : "payment-state pending"}>{planStatus(plan.amount, plan.paid)}</span></td>
             </tr>;
-          }) : <tr><td colSpan={13} className="none">Seçilen firmaya ait ödeme planı bulunmuyor.</td></tr>}</tbody>
+          }) : <tr><td colSpan={9} className="none">{appliedQuery ? "Sorgu kriterlerine uygun ödeme planı bulunamadı." : "Sonuçları görmek için kriterleri seçip Sorgula butonuna basın."}</td></tr>}</tbody>
+          {currencyVisible.length ? <tfoot><tr className="table-total"><td colSpan={5}>TOPLAM</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.amount, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.paid, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => Math.max(0, plan.amount - plan.paid), (plan) => plan.currency)}</td><td /></tr></tfoot> : null}
         </table>
       </div>
-      <small className="cash-out-count">{visible.length} ödeme planı</small>
+      <small className="cash-out-count">{appliedQuery ? `${currencyVisible.length} ödeme planı gösteriliyor` : "Henüz sorgu yapılmadı"}</small>
     </section>
   );
 }
@@ -961,8 +1123,9 @@ function CashPage({
       rate: "0",
       amount: "0",
       paid: "0",
-      currency: type === "currency" ? "DOLAR" : "TRY",
-      targetCurrency: "EURO",
+      currency: type === "currency" ? "TRY" : "TRY",
+      targetCurrency: type === "currency" ? "DOLAR" : "EURO",
+      debtName: "",
       note: "",
     }),
     u = (k: string, v: string) => setF((current) => {
@@ -974,9 +1137,54 @@ function CashPage({
     });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState("");
-  const currencyDescription = `${f.rate || "0"} DÖVİZ KURUNDAN ${f.amount || "0"} ${f.currency} KARŞILIĞINDA ${f.paid || "0"} ${f.targetCurrency} ÖDENMİŞTİR.`;
+  const [rateStatus, setRateStatus] = useState("");
+  const [rateLoading, setRateLoading] = useState(false);
+  const currencyTargets: Record<string, string[]> = {
+    TRY: ["DOLAR", "EURO"],
+    DOLAR: ["TRY", "EURO"],
+    EURO: ["TRY", "DOLAR"],
+  };
+  const toFormCurrency = (currency?: string) => ({ USD: "DOLAR", EUR: "EURO" })[currency ?? ""] ?? currency ?? "TRY";
+  const targetCurrencyOptions = currencyTargets[toFormCurrency(f.currency)] ?? ["DOLAR", "EURO"];
+  const loadCurrentRate = useCallback(async (from: string, to: string) => {
+    if (type !== "currency") return;
+    setRateLoading(true);
+    setRateStatus("TCMB güncel kuru alınıyor…");
+    try {
+      const response = await fetch(`/api/exchange-rate?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { cache: "no-store" });
+      const data = await response.json() as { rate?: number; source?: string; date?: string; error?: string };
+      if (!response.ok || !data.rate) throw new Error(data.error || "Güncel kur alınamadı.");
+      setF((current) => ({
+        ...current,
+        rate: String(data.rate),
+        paid: String(Math.round(data.rate! * Number(current.amount) * 100) / 100),
+      }));
+      setRateStatus(`${data.source} güncel kuru (${formatDate(data.date)})`);
+    } catch (error) {
+      setRateStatus(error instanceof Error ? error.message : "Güncel kur alınamadı; kuru elle girebilirsiniz.");
+    } finally {
+      setRateLoading(false);
+    }
+  }, [type]);
+  useEffect(() => {
+    if (type !== "currency") return;
+    void loadCurrentRate(f.currency, f.targetCurrency);
+  }, [type, f.currency, f.targetCurrency, loadCurrentRate]);
+  const automaticCashInAccount = () => {
+    const currency = currencyCode(f.currency);
+    if (f.payment === "BANKA") {
+      return accounts.find((account) => account.currency === currency && account.type === "BANKA")?.name
+        ?? `${currency} Banka Hesabı`;
+    }
+    if (f.payment === "NAKİT" || f.payment === "--Seçiniz--") {
+      return accounts.find((account) => account.currency === currency && account.type === "NAKİT")?.name
+        ?? `${currency} Nakit Kasa`;
+    }
+    return `${f.payment} ${currency} Hesabı`;
+  };
+  const currencyDescription = `1 ${f.currency} = ${f.rate || "0"} ${f.targetCurrency} KURUNDAN ${f.amount || "0"} ${f.currency}, ${f.paid || "0"} ${f.targetCurrency} PARA BİRİMİNE ÇEVRİLMİŞTİR.`;
   const add = () => {
-    const amount = Number(virman ? f.paid || f.amount : f.amount);
+    const amount = Number(type === "currency" ? f.amount : virman ? f.paid || f.amount : f.amount);
     const missingPayment = virman
       ? f.sent === "--Seçiniz--" || f.received === "--Seçiniz--"
       : f.payment === "--Seçiniz--";
@@ -1033,9 +1241,10 @@ function CashPage({
             : f.payment === "--Seçiniz--"
               ? "NAKİT"
               : f.payment,
-          account: f.account,
+          account: isIn ? automaticCashInAccount() : f.account,
           amount,
-          currency: type === "currency" ? f.targetCurrency : f.currency,
+          currency: f.currency,
+          debtName: isIn ? f.debtName.trim() : undefined,
           note:
             type === "currency"
               ? currencyDescription
@@ -1044,15 +1253,15 @@ function CashPage({
             ? {
                 targetPayment:
                   f.received === "--Seçiniz--" ? "NAKİT" : f.received,
-                targetAmount: type === "currency" ? Number(f.amount) : amount,
-                targetCurrency: f.currency,
+                targetAmount: type === "currency" ? Number(f.paid) : amount,
+                targetCurrency: type === "currency" ? f.targetCurrency : f.currency,
               }
             : {}),
         },
         ...rows.filter((row) => row.id !== editingId),
       ]);
     setEditingId(null);
-    setF((current) => ({ ...current, amount: "0", paid: "0", note: "" }));
+    setF((current) => ({ ...current, amount: "0", paid: "0", debtName: "", note: "" }));
   };
   const shown = rows.filter((r) => {
     const kind = r.kind ?? (r.movement === "ÇIKIŞ" ? "cash-out" : r.movement === "VİRMAN"
@@ -1063,25 +1272,21 @@ function CashPage({
     setEditingId(row.id);
     setF({ date: row.date, movement: row.movementType ?? row.movement,
       payment: row.payment, account: row.account, received: row.targetPayment ?? "--Seçiniz--",
-      sent: row.payment, rate: String(row.rate ?? (row.targetAmount ? row.amount / row.targetAmount : 0)),
-      amount: String(type === "currency" ? row.targetAmount ?? 0 : row.amount), paid: String(row.amount),
-      currency: type === "currency" ? row.targetCurrency ?? "EURO" : row.currency,
-      targetCurrency: row.currency, note: row.note });
+      sent: row.payment, rate: String(row.rate ?? (row.targetAmount ? row.targetAmount / row.amount : 0)),
+      amount: String(row.amount), paid: String(type === "currency" ? row.targetAmount ?? 0 : row.amount),
+      currency: toFormCurrency(row.currency),
+      targetCurrency: type === "currency" ? toFormCurrency(row.targetCurrency ?? "EURO") : "EURO", debtName: row.debtName ?? "", note: row.note });
     document.querySelector(".entry")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   return (
     <>
       <div className="form-list">
         <section className="entry">
-          <Fixed />
+          <Fixed hideBranch={isIn} />
           {virman ? (
             <>
               <Field l="İŞLEM TARİHİ">
-                <input
-                  type="date"
-                  value={f.date}
-                  onChange={(e) => u("date", e.target.value)}
-                />
+                <TurkishDateInput value={f.date} setValue={(value) => u("date", value)} />
               </Field>
               <Field l="GÖNDEREN ÖDEME TÜRÜ">
                 <Select
@@ -1100,30 +1305,48 @@ function CashPage({
               {type === "currency" && (
                 <>
                   <div className="dual">
-                    <Field l="ALINAN PARA BİRİMİ">
+                    <Field l="GÖNDEREN PARA BİRİMİ">
                       <Select
                         v={f.currency}
-                        set={(v) => u("currency", v)}
+                        set={(v) => setF((current) => ({ ...current, currency: v, targetCurrency: currencyTargets[v][0], rate: "0", paid: "0" }))}
                         o={currencyTypes}
                       />
                     </Field>
                     <b>⇄</b>
-                    <Field l="ÖDENEN PARA BİRİMİ">
+                    <Field l="ALAN PARA BİRİMİ">
                       <Select
+                        key={`target-${f.currency}`}
                         v={f.targetCurrency}
-                        set={(v) => u("targetCurrency", v)}
-                        o={currencyTypes}
+                        set={(v) => setF((current) => ({ ...current, targetCurrency: v, rate: "0", paid: "0" }))}
+                        o={targetCurrencyOptions}
                       />
+                      <div className="currency-target-options">
+                        {targetCurrencyOptions.map((currency) => (
+                          <button
+                            type="button"
+                            className={f.targetCurrency === currency ? "active" : ""}
+                            key={currency}
+                            onClick={() => setF((current) => ({ ...current, targetCurrency: currency, rate: "0", paid: "0" }))}
+                          >
+                            {currency}
+                          </button>
+                        ))}
+                      </div>
                     </Field>
                   </div>
-                  <Field l="T.C.M.B. DÖVİZ KURU">
-                    <input
-                      type="number"
-                      value={f.rate}
-                      onChange={(e) => u("rate", e.target.value)}
-                    />
+                  <Field l="GÜNCEL / MANUEL KUR">
+                    <div className="rate-input-row">
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={f.rate}
+                        onChange={(e) => { u("rate", e.target.value); setRateStatus("Kur elle girildi."); }}
+                      />
+                      <button type="button" onClick={() => void loadCurrentRate(f.currency, f.targetCurrency)} disabled={rateLoading}>{rateLoading ? "Alınıyor…" : "Güncel Kuru Getir"}</button>
+                    </div>
+                    {rateStatus ? <small className="rate-status">{rateStatus}</small> : null}
                   </Field>
-                  <Field l="ALINAN TUTAR">
+                  <Field l="GÖNDERİLEN TUTAR">
                     <input
                       type="number"
                       value={f.amount}
@@ -1132,22 +1355,19 @@ function CashPage({
                   </Field>
                 </>
               )}
-              <Field l={type === "currency" ? "ÖDENEN TUTAR" : "GÖNDERİLEN TUTAR"}>
+              <Field l={type === "currency" ? "ALINAN TUTAR" : "GÖNDERİLEN TUTAR"}>
                 <input
                   type="number"
                   value={f.paid}
-                  onChange={(e) => u("paid", e.target.value)}
+                  onChange={(e) => type === "currency" ? undefined : u("paid", e.target.value)}
+                  readOnly={type === "currency"}
                 />
               </Field>
             </>
           ) : (
             <>
               <Field l="İŞLEM TARİHİ">
-                <input
-                  type="date"
-                  value={f.date}
-                  onChange={(e) => u("date", e.target.value)}
-                />
+                <TurkishDateInput value={f.date} setValue={(value) => u("date", value)} />
               </Field>
               <Field l="HAREKET TÜRÜ">
                 <Select
@@ -1163,13 +1383,6 @@ function CashPage({
                   o={paymentTypes}
                 />
               </Field>
-              <Field l="KASA / BANKA HESABI">
-                <Select
-                  v={f.account}
-                  set={(v) => u("account", v)}
-                  o={accounts.map((account) => account.name)}
-                />
-              </Field>
               <Field l="TUTAR">
                 <input
                   type="number"
@@ -1177,6 +1390,15 @@ function CashPage({
                   onChange={(e) => u("amount", e.target.value)}
                 />
               </Field>
+              {isIn ? (
+                <Field l="BORCUN ADI">
+                  <input
+                    value={f.debtName}
+                    onChange={(event) => u("debtName", event.target.value)}
+                    placeholder="Borcun adını girin"
+                  />
+                </Field>
+              ) : null}
             </>
           )}
           {type !== "currency" ? (
@@ -1321,17 +1543,29 @@ function CashPosition({ rows }: { rows: Row[] }) {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="table-total">
+              <td colSpan={3}>TOPLAM</td>
+              <td>{totalsByCurrency(balances, (account) => account.balance, (account) => account.currency)}</td>
+              <td>{totalsByCurrency(balances, (account) => account.reserved, (account) => account.currency)}</td>
+              <td>{totalsByCurrency(balances, (account) => account.reserved, (account) => account.currency)}</td>
+              <td>{totalsByCurrency(balances, (account) => account.usable, (account) => account.currency)}</td>
+              <td />
+            </tr>
+          </tfoot>
         </table>
       </div>
     </section>
   );
 }
-function Fixed() {
+function Fixed({ hideBranch = false }: { hideBranch?: boolean }) {
   return (
     <>
-      <Field l="ŞUBE">
-        <Select v={branch} set={() => {}} o={[branch]} />
-      </Field>
+      {!hideBranch ? (
+        <Field l="ŞUBE">
+          <Select v={branch} set={() => {}} o={[branch]} />
+        </Field>
+      ) : null}
       <Field l="İŞLEM YAPAN">
         <Select v="ARAFAT ŞİMŞEK" set={() => {}} o={["ARAFAT ŞİMŞEK"]} />
       </Field>
@@ -1339,7 +1573,7 @@ function Fixed() {
         <input value={today.slice(0, 4)} readOnly />
       </Field>
       <Field l="KAYIT TARİHİ">
-        <input value={today.split("-").reverse().join(".")} readOnly />
+        <input value={formatDate(today)} readOnly />
       </Field>
     </>
   );
@@ -1362,6 +1596,7 @@ function List({
   const [q, setQ] = useState("");
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
+  const [tableCurrency, setTableCurrency] = useState("TÜMÜ");
   const emptyFilters = {
     year: "--Seçiniz--",
     month: "--Seçiniz--",
@@ -1389,7 +1624,7 @@ function List({
     ARALIK: "12",
   };
   const shown = rows.filter((row) => {
-    const searchable = `${row.note} ${row.payment} ${row.movement} ${row.account} ${row.currency}`.toLowerCase();
+    const searchable = `${row.debtName ?? ""} ${row.note} ${row.payment} ${row.movement} ${row.account} ${row.currency}`.toLowerCase();
     if (!searchable.includes(q.toLowerCase())) return false;
     if (appliedFilters.year !== "--Seçiniz--" && !row.date.startsWith(appliedFilters.year)) return false;
     if (
@@ -1402,6 +1637,9 @@ function List({
     if (appliedFilters.payment !== "--Seçiniz--" && row.payment !== appliedFilters.payment && row.targetPayment !== appliedFilters.payment) return false;
     return true;
   });
+  const currencyRows = shown.filter(
+    (row) => tableCurrency === "TÜMÜ" || currencyCode(row.currency) === tableCurrency,
+  );
   return (
     <section className="list">
       <h2>{title}</h2>
@@ -1426,18 +1664,10 @@ function List({
             />
           </Field>
           <Field l="KAYIT TARİHİ (GÜNLÜK)">
-            <input
-              type="date"
-              value={filters.recordDate}
-              onChange={(event) => setFilter("recordDate", event.target.value)}
-            />
+            <TurkishDateInput value={filters.recordDate} setValue={(value) => setFilter("recordDate", value)} />
           </Field>
           <Field l="TAHSİLAT TARİHİ (GÜNLÜK)">
-            <input
-              type="date"
-              value={filters.collectionDate}
-              onChange={(event) => setFilter("collectionDate", event.target.value)}
-            />
+            <TurkishDateInput value={filters.collectionDate} setValue={(value) => setFilter("collectionDate", value)} />
           </Field>
           {type !== "transfer" && <Field l="HAREKET TÜRÜ">
             <Select
@@ -1462,7 +1692,11 @@ function List({
           </button>
         </div>
       </div>
-      <Tools q={q} setQ={(value) => { setQ(value); setPage(1); }} pageSize={pageSize} setPageSize={(value) => { setPageSize(value); setPage(1); }} rows={shown} />
+      <Tools q={q} setQ={(value) => { setQ(value); setPage(1); }} pageSize={pageSize} setPageSize={(value) => { setPageSize(value); setPage(1); }} rows={currencyRows} />
+      <div className="table-currency-filter">
+        <div><b>PARA BİRİMİNE GÖRE LİSTELE</b><small>Tablo ve toplamlar seçilen para birimine göre güncellenir.</small></div>
+        <Select v={tableCurrency} set={(value) => { setTableCurrency(value); setPage(1); }} o={["TÜMÜ", "TRY", "USD", "EUR"]} />
+      </div>
       <div className="scroll">
         <table className="records">
           <thead>
@@ -1470,19 +1704,20 @@ function List({
               <th>GÜNCELLE</th>
               <th>SİL</th>
               <th>İŞLEM TARİHİ</th>
-              <th>ŞUBE</th>
+              {type !== "cash-in" ? <th>ŞUBE</th> : null}
               <th>HAREKET TÜRÜ</th>
               <th>ÖDEME TÜRÜ</th>
-              <th>{type === "currency" ? "ALINAN TUTAR / BİRİM" : type === "transfer" ? "ALAN ÖDEME TÜRÜ" : "KASA / BANKA HESABI"}</th>
+              {type !== "cash-in" ? <th>{type === "currency" ? "ALINAN TUTAR / BİRİM" : type === "transfer" ? "ALAN ÖDEME TÜRÜ" : "KASA / BANKA HESABI"}</th> : null}
               <th>TUTAR</th>
               <th>PARA BİRİMİ</th>
               <th>KAYIT TARİHİ</th>
+              {type === "cash-in" ? <th>BORCUN ADI</th> : null}
               <th>AÇIKLAMA</th>
             </tr>
           </thead>
           <tbody>
-            {shown.length ? (
-              shown.slice((Math.min(page, Math.max(1, Math.ceil(shown.length / pageSize))) - 1) * pageSize, Math.min(page, Math.max(1, Math.ceil(shown.length / pageSize))) * pageSize).map((r) => (
+            {currencyRows.length ? (
+              currencyRows.slice((Math.min(page, Math.max(1, Math.ceil(currencyRows.length / pageSize))) - 1) * pageSize, Math.min(page, Math.max(1, Math.ceil(currencyRows.length / pageSize))) * pageSize).map((r) => (
                 <tr key={r.id}>
                   <td>
                     <button className="mini blue" onClick={() => onEdit(r)}>Güncelle</button>
@@ -1495,20 +1730,21 @@ function List({
                       Sil
                     </button>
                   </td>
-                  <td>{r.date}</td>
-                  <td>{branch}</td>
+                  <td>{formatDate(r.date)}</td>
+                  {type !== "cash-in" ? <td>{branch}</td> : null}
                   <td>{r.movementType && r.movementType !== "--Seçiniz--" ? r.movementType : r.movement}</td>
                   <td>{r.payment}{type === "currency" && r.targetPayment ? ` → ${r.targetPayment}` : ""}</td>
-                  <td>{type === "currency" ? `${r.targetAmount} ${r.targetCurrency}` : type === "transfer" ? r.targetPayment : r.account}</td>
+                  {type !== "cash-in" ? <td>{type === "currency" ? `${r.targetAmount} ${r.targetCurrency}` : type === "transfer" ? r.targetPayment : r.account}</td> : null}
                   <td>{r.amount.toFixed(2)}</td>
                   <td>{r.currency}</td>
-                  <td>{r.recordDate ?? today}</td>
+                  <td>{formatDate(r.recordDate ?? today)}</td>
+                  {type === "cash-in" ? <td>{r.debtName || "—"}</td> : null}
                   <td>{r.note}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={11} className="none">
+                <td colSpan={type === "cash-in" ? 10 : 11} className="none">
                   Tablo boş
                   <br />
                   <small>Gösterilecek hiç kayıt yok.</small>
@@ -1516,19 +1752,28 @@ function List({
               </tr>
             )}
           </tbody>
+          {currencyRows.length ? (
+            <tfoot>
+              <tr className="table-total">
+                <td colSpan={type === "cash-in" ? 5 : 7}>TOPLAM</td>
+                <td>{totalsByCurrency(currencyRows, (row) => row.amount, (row) => row.currency)}</td>
+                <td colSpan={type === "cash-in" ? 4 : 3} />
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
       <div className="pager">
         <button disabled={page <= 1} onClick={() => setPage(Math.max(1, page - 1))}>Önceki</button>
-        <b>{Math.min(page, Math.max(1, Math.ceil(shown.length / pageSize)))} / {Math.max(1, Math.ceil(shown.length / pageSize))}</b>
-        <button disabled={page >= Math.ceil(shown.length / pageSize)} onClick={() => setPage(page + 1)}>Sonraki</button>
+        <b>{Math.min(page, Math.max(1, Math.ceil(currencyRows.length / pageSize)))} / {Math.max(1, Math.ceil(currencyRows.length / pageSize))}</b>
+        <button disabled={page >= Math.ceil(currencyRows.length / pageSize)} onClick={() => setPage(page + 1)}>Sonraki</button>
       </div>
     </section>
   );
 }
 function Tools({ q, setQ, pageSize, setPageSize, rows }: { q: string; setQ: (v: string) => void; pageSize: number; setPageSize: (value: number) => void; rows: Row[] }) {
   const [message, setMessage] = useState("");
-  const data = [["İşlem Tarihi", "Şube", "Hareket Türü", "Gönderen Ödeme", "Alan Ödeme", "Hesap", "Tutar", "Para Birimi", "Alınan Tutar", "Alınan Para Birimi", "Kayıt Tarihi", "Açıklama"], ...rows.map((row) => [row.date, branch, row.movementType ?? row.movement, row.payment, row.targetPayment ?? "", row.account, row.amount, row.currency, row.targetAmount ?? "", row.targetCurrency ?? "", row.recordDate ?? today, row.note])];
+  const data = [["İşlem Tarihi", "Şube", "Hareket Türü", "Gönderen Ödeme", "Alan Ödeme", "Hesap", "Tutar", "Para Birimi", "Alınan Tutar", "Alınan Para Birimi", "Kayıt Tarihi", "Borcun Adı", "Açıklama"], ...rows.map((row) => [formatDate(row.date), branch, row.movementType ?? row.movement, row.payment, row.targetPayment ?? "", row.account, row.amount, row.currency, row.targetAmount ?? "", row.targetCurrency ?? "", formatDate(row.recordDate ?? today), row.debtName ?? "", row.note])];
   const copy = async () => {
     try { await navigator.clipboard.writeText(data.map((row) => row.join("\t")).join("\n")); setMessage("Kayıtlar kopyalandı."); }
     catch { setMessage("Tarayıcı panoya erişim izni vermedi."); }
@@ -1578,45 +1823,50 @@ function Planning({
   const [units, setUnits] = useState<PaymentUnit[]>(paymentUnitsSeed);
   const [unitsReady, setUnitsReady] = useState(false);
   useEffect(() => {
-    const saved = localStorage.getItem("mks-payment-units");
-    if (saved) {
-      try { const parsed = JSON.parse(saved); if (Array.isArray(parsed)) setUnits(parsed); } catch { /* Keep the initial units if stored data is unreadable. */ }
+    const catalogVersion = "partner-catalog-2026-09-16";
+    if (localStorage.getItem("mks-payment-units-version") === catalogVersion) {
+      const saved = localStorage.getItem("mks-payment-units");
+      if (saved) {
+        try { setUnits(completePartnerUnits(JSON.parse(saved))); } catch { setUnits(paymentUnitsSeed); }
+      }
+    } else {
+      setUnits(paymentUnitsSeed);
+      localStorage.setItem("mks-payment-units", JSON.stringify(paymentUnitsSeed));
+      localStorage.setItem("mks-payment-units-version", catalogVersion);
     }
     setUnitsReady(true);
   }, []);
   useEffect(() => {
     if (unitsReady) localStorage.setItem("mks-payment-units", JSON.stringify(units));
   }, [units, unitsReady]);
-  const [plannedGroup, setPlannedGroup] = useState("AYNİ");
-  const [activeScope, setActiveScope] =
-    useState<PaymentUnit["scope"]>("Kampüs");
-  const [unitStatus, setUnitStatus] = useState("AKTİF");
+  const [plannedGroup, setPlannedGroup] = useState("PARTNER");
+  const [unitStatus, setUnitStatus] = useState("TÜMÜ");
   const [unitSearch, setUnitSearch] = useState("");
-  const [firm, setFirm] = useState("BERR GLOBAL UGANDA");
+  const [firm, setFirm] = useState("BERR GLOBAL");
   const [yearFilter, setYearFilter] = useState("--Seçiniz--");
   const [monthFilter, setMonthFilter] = useState("--Seçiniz--");
+  const [currencyFilter, setCurrencyFilter] = useState("--Seçiniz--");
   const [orderFilter, setOrderFilter] = useState("--Seçiniz--");
   const [selectedPlans, setSelectedPlans] = useState<number[]>([]);
-  const companies = Array.from(
-    new Set([
-      ...units.map((unit) => unit.name),
-      ...plans.map((plan) => plan.company),
-    ]),
-  );
+  const [deleteError, setDeleteError] = useState("");
+  const companies = plannedGroup === "PARTNER"
+    ? partnerNames
+    : Array.from(new Set([...units.map((unit) => unit.name), ...plans.map((plan) => plan.company)]));
   const visibleUnits = units.filter(
     (unit) =>
       unit.group === plannedGroup &&
-      unit.scope === activeScope &&
-      unit.status === unitStatus &&
+      (unitStatus === "TÜMÜ" || unit.status === unitStatus) &&
       `${unit.name} ${unit.country} ${unit.region}`
         .toLocaleLowerCase("tr-TR")
         .includes(unitSearch.toLocaleLowerCase("tr-TR")),
   );
   const filtered = plans.filter(
     (plan) =>
+      currencyFilter !== "--Seçiniz--" &&
       plan.company === firm &&
       (yearFilter === "--Seçiniz--" || plan.year === yearFilter) &&
       (monthFilter === "--Seçiniz--" || plan.month === monthFilter) &&
+      currencyCode(plan.currency) === currencyFilter &&
       (orderFilter === "--Seçiniz--" || plan.order === orderFilter),
   );
   const savePlan = (data: PlanInput) => {
@@ -1665,7 +1915,7 @@ function Planning({
         </div>
         <div className="planning-master">
           <div className="plan-select">
-            <div className="filter-heading"><h3><Filter /> Filtrele</h3><button onClick={() => { setUnitStatus("AKTİF"); setPlannedGroup("AYNİ"); setActiveScope("Kampüs"); setUnitSearch(""); }}>Filtreleri Temizle</button></div>
+            <div className="filter-heading"><h3><Filter /> Filtrele</h3><button onClick={() => { setUnitStatus("TÜMÜ"); setPlannedGroup("PARTNER"); setUnitSearch(""); }}>Filtreleri Temizle</button></div>
             <Field l="ŞUBE (KAMPÜS) SORGU">
               <Select v={branch} set={() => {}} o={[branch]} />
             </Field>
@@ -1673,25 +1923,14 @@ function Planning({
               <Select
                 v={unitStatus}
                 set={setUnitStatus}
-                o={["AKTİF", "PASİF"]}
+                o={["TÜMÜ", "AKTİF", "PASİF"]}
               />
             </Field>
             <Field l="PLANLANAN GRUP">
               <Select
                 v={plannedGroup}
                 set={setPlannedGroup}
-                o={[
-                  "AYNİ",
-                  "BURS",
-                  "FİRMA",
-                  "GENEL",
-                  "HUZUR",
-                  "PARTNER",
-                  "PERSONEL",
-                  "SOSYAL",
-                  "YETİM",
-                  "ZEKAT",
-                ]}
+                o={["PARTNER"]}
               />
             </Field>
             <button
@@ -1706,22 +1945,6 @@ function Planning({
           </div>
           <div className="unit-list">
             <div className="unit-list-head">
-              <div>
-                <h3>{plannedGroup} LİSTESİ</h3>
-                <div className="unit-tabs">
-                  {(["Kampüs", "Genel", "ÇBY", "Proje"] as const).map(
-                    (scope) => (
-                      <button
-                        key={scope}
-                        className={activeScope === scope ? "active" : ""}
-                        onClick={() => setActiveScope(scope)}
-                      >
-                        {scope}
-                      </button>
-                    ),
-                  )}
-                </div>
-              </div>
               <label>
                 Arama:{" "}
                 <input
@@ -1815,6 +2038,16 @@ function Planning({
             className="delete"
             disabled={!selectedPlans.length}
             onClick={() => {
+              const unpaidPlans = plans.filter(
+                (plan) => selectedPlans.includes(plan.id) && plan.paid <= 0,
+              );
+              if (unpaidPlans.length) {
+                setDeleteError(
+                  `Ödeme yapılmamış ${unpaidPlans.length} plan silinemez. Önce ödeme kaydı oluşturun.`,
+                );
+                return;
+              }
+              setDeleteError("");
               setPlans(
                 plans.filter((plan) => !selectedPlans.includes(plan.id)),
               );
@@ -1850,14 +2083,25 @@ function Planning({
               o={["--Seçiniz--", "OCAK", "ŞUBAT", "MART", "NİSAN", "MAYIS", "HAZİRAN", "TEMMUZ", "AĞUSTOS", "EYLÜL", "EKİM", "KASIM", "ARALIK"]}
             />
           </Field>
+          <Field l="PARA BİRİMİ">
+            <Select
+              v={currencyFilter}
+              set={(currency) => {
+                setCurrencyFilter(currency);
+                setSelectedPlans([]);
+              }}
+              o={["--Seçiniz--", "TRY", "USD", "EUR"]}
+            />
+          </Field>
           <Field l="SİPARİŞ DURUMU">
             <Select
               v={orderFilter}
               set={setOrderFilter}
-              o={["--Seçiniz--", "VERİLDİ", "BEKLİYOR"]}
+              o={["--Seçiniz--", "VERİLDİ", "VERİLMEDİ", "BEKLİYOR"]}
             />
           </Field>
         </div>
+        {deleteError ? <div className="form-error" role="alert">{deleteError}</div> : null}
         <div className="scroll">
           <table className="records plan-table">
             <thead>
@@ -1890,7 +2134,6 @@ function Planning({
                 <th>FİRMA</th>
                 <th>TÜRÜ</th>
                 <th>GRUP</th>
-                <th>FATURA NO</th>
                 <th>FATURA TARİHİ</th>
                 <th>FATURA ÖD. TARİHİ</th>
                 <th>YILLAR</th>
@@ -1953,19 +2196,39 @@ function Planning({
                   <td>{p.company}</td>
                   <td>{p.type}</td>
                   <td>{p.group}</td>
-                  <td>{p.invoice}</td>
-                  <td>{p.invoiceDate}</td>
-                  <td>{p.due}</td>
+                  <td>{formatDate(p.invoiceDate)}</td>
+                  <td>{formatDate(p.due)}</td>
                   <td>{p.year}</td>
                   <td>{p.month}</td>
                   <td>{p.amount.toFixed(2)}</td>
                   <td>{p.paid.toFixed(2)}</td>
                   <td>{Math.max(0, p.amount - p.paid).toFixed(2)}</td>
                   <td className="status">{planStatus(p.amount, p.paid)}</td>
-                  <td className="status">{p.order}</td>
+                  <td
+                    className={`status order-status ${
+                      p.order === "VERİLDİ"
+                        ? "order-given"
+                        : p.order === "VERİLMEDİ"
+                          ? "order-not-given"
+                          : "order-pending"
+                    }`}
+                  >
+                    {p.order}
+                  </td>
                 </tr>
               ))}
             </tbody>
+            {filtered.length ? (
+              <tfoot>
+                <tr className="table-total">
+                  <td colSpan={9}>TOPLAM</td>
+                  <td>{totalsByCurrency(filtered, (plan) => plan.amount, (plan) => plan.currency)}</td>
+                  <td>{totalsByCurrency(filtered, (plan) => plan.paid, (plan) => plan.currency)}</td>
+                  <td>{totalsByCurrency(filtered, (plan) => Math.max(0, plan.amount - plan.paid), (plan) => plan.currency)}</td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            ) : null}
           </table>
         </div>
       </section>
@@ -1986,7 +2249,7 @@ function Planning({
       {unitShow && (
         <PaymentUnitModal
           defaultGroup={plannedGroup}
-          defaultScope={activeScope}
+          defaultScope="Kampüs"
           initial={editingUnit ?? undefined}
           close={() => {
             setUnitShow(false);
@@ -2005,8 +2268,7 @@ function Planning({
               setUnits([{ ...unit, id: Date.now() }, ...units]);
             }
             setFirm(unit.name);
-            setPlannedGroup(unit.group);
-            setActiveScope(unit.scope);
+            setPlannedGroup("PARTNER");
             setUnitShow(false);
             setEditingUnit(null);
           }}
@@ -2032,7 +2294,7 @@ function PaymentUnitModal({
   const [form, setForm] = useState<Omit<PaymentUnit, "id">>({
     group: initial?.group ?? defaultGroup,
     scope: initial?.scope ?? defaultScope,
-    name: initial?.name ?? "",
+    name: initial?.name ?? "--Seçiniz--",
     branch: initial?.branch ?? branch,
     country: initial?.country ?? "--Seçiniz--",
     region: initial?.region ?? "--Seçiniz--",
@@ -2040,12 +2302,26 @@ function PaymentUnitModal({
     status: initial?.status ?? "AKTİF",
   });
   const [error, setError] = useState("");
+  const countryPartners = partnerCatalog.filter(
+    (partner) => partner.country === form.country,
+  );
+  const countryRegions = Array.from(
+    new Set(countryPartners.map((partner) => partner.region)),
+  );
   const submit = () => {
-    if (!form.name.trim()) {
-      setError("Firma / partner adı zorunludur.");
+    if (!outgoingCountries.includes(form.country)) {
+      setError("Giden ülkeyi seçiniz.");
       return;
     }
-    save({ ...form, name: form.name.trim().toUpperCase() });
+    if (!countryPartners.some((partner) => partner.name === form.name)) {
+      setError("Seçilen ülkeye ait partneri seçiniz.");
+      return;
+    }
+    if (!countryRegions.includes(form.region)) {
+      setError("Seçilen ülkeye ait bölgeyi seçiniz.");
+      return;
+    }
+    save({ ...form, group: "PARTNER" });
   };
   return (
     <Modal title="FİRMA KAYIT GİRİŞ VE GÜNCELLEME FORMU" close={close}>
@@ -2057,18 +2333,7 @@ function PaymentUnitModal({
           <Select
             v={form.group}
             set={(group) => setForm({ ...form, group })}
-            o={[
-              "AYNİ",
-              "BURS",
-              "FİRMA",
-              "GENEL",
-              "HUZUR",
-              "PARTNER",
-              "PERSONEL",
-              "SOSYAL",
-              "YETİM",
-              "ZEKAT",
-            ]}
+            o={["PARTNER"]}
           />
         </Field>
         <Field l="BİRİM TÜRÜ">
@@ -2080,41 +2345,42 @@ function PaymentUnitModal({
             o={["Kampüs", "Genel", "ÇBY", "Proje"]}
           />
         </Field>
-        <Field l="ÜLKE">
+        <Field l="GİDEN ÜLKE">
           <Select
             v={form.country}
-            set={(country) => setForm({ ...form, country })}
-            o={[
-              "--Seçiniz--",
-              "TÜRKİYE",
-              "AFGANİSTAN",
-              "UGANDA",
-              "SOMALİ",
-              "PAKİSTAN",
-              "SURİYE",
-            ]}
+            set={(country) => {
+              const matches = partnerCatalog.filter((partner) => partner.country === country);
+              setForm({
+                ...form,
+                country,
+                name: matches[0]?.name ?? "",
+                region: matches[0]?.region ?? "--Seçiniz--",
+                status: matches[0]?.status ?? "AKTİF",
+              });
+            }}
+            o={["--Seçiniz--", ...outgoingCountries]}
           />
         </Field>
-        <Field l="İL/BÖLGE">
+        <Field l="GİDEN BÖLGE">
           <Select
             v={form.region}
             set={(region) => setForm({ ...form, region })}
-            o={[
-              "--Seçiniz--",
-              "GENEL MERKEZ",
-              "KABİL",
-              "KAMPALA",
-              "MOGADİŞU",
-              "İSLAMABAD",
-            ]}
+            o={["--Seçiniz--", ...countryRegions]}
           />
         </Field>
         <Field l="FİRMA - (PARTNER) ADI">
-          <input
-            autoFocus
-            value={form.name}
-            onChange={(event) => setForm({ ...form, name: event.target.value })}
-            placeholder="Firma veya partner adı"
+          <Select
+            v={form.name}
+            set={(name) => {
+              const partner = countryPartners.find((item) => item.name === name);
+              setForm({
+                ...form,
+                name,
+                region: partner?.region ?? form.region,
+                status: partner?.status ?? form.status,
+              });
+            }}
+            o={["--Seçiniz--", ...countryPartners.map((partner) => partner.name)]}
           />
         </Field>
         <Field l="FİRMA TELEFON">
@@ -2176,7 +2442,6 @@ function PlanModal({
     company: initial?.company ?? defaultCompany ?? companies[0] ?? "",
     type: initial?.type ?? defaultPaymentGroup,
     group: initial?.group ?? "NAFİLE KURBAN",
-    invoice: initial?.invoice ?? "0",
     invoiceDate: initial?.invoiceDate ?? today,
     due: initial?.due ?? today,
     year: initial?.year ?? "2026",
@@ -2226,18 +2491,10 @@ function PlanModal({
           />
         </Field>
         <Field l="FATURA TARİHİ">
-          <input
-            type="date"
-            value={f.invoiceDate}
-            onChange={(e) => setF({ ...f, invoiceDate: e.target.value })}
-          />
+          <TurkishDateInput value={f.invoiceDate} setValue={(value) => setF({ ...f, invoiceDate: value })} />
         </Field>
         <Field l="FAT. ÖDEME TAR.">
-          <input
-            type="date"
-            value={f.due}
-            onChange={(e) => setF({ ...f, due: e.target.value })}
-          />
+          <TurkishDateInput value={f.due} setValue={(value) => setF({ ...f, due: value })} />
         </Field>
         <Field l="PROJE(GRUP)">
           <Select
@@ -2287,12 +2544,6 @@ function PlanModal({
             }
           />
         </Field>
-        <Field l="FATURA NO">
-          <input
-            value={f.invoice}
-            onChange={(e) => setF({ ...f, invoice: e.target.value })}
-          />
-        </Field>
         <Field l="FAT/ÖD. YIL">
           <Select
             v={f.year}
@@ -2323,7 +2574,7 @@ function PlanModal({
           <Select
             v={f.order}
             set={(order) => setF({ ...f, order })}
-            o={["BEKLİYOR", "VERİLDİ"]}
+            o={["BEKLİYOR", "VERİLDİ", "VERİLMEDİ"]}
           />
         </Field>
         <Field l="AÇIKLAMA">
@@ -2416,6 +2667,14 @@ function Payment({
                 </tr>
               )}
             </tbody>
+            <tfoot>
+              <tr className="table-total">
+                <td>TOPLAM</td>
+                <td>—</td>
+                <td>{fmt(transactions.reduce((sum, transaction) => sum + transaction.amount, 0), plan.currency)}</td>
+                <td>{fmt(Math.max(0, plan.amount - plan.paid), plan.currency)}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
         <div className="modal-grid">
@@ -2434,17 +2693,14 @@ function Payment({
           <Field l="FİRMA/PARTNER">
             <input value={plan.company} readOnly />
           </Field>
-          <Field l="FATURA NO">
-            <input value={plan.invoice} readOnly />
-          </Field>
           <Field l="BARKOD">
             <input
-              value={`${plan.id}-${plan.company}-${plan.group}-${plan.due}`}
+              value={`${plan.id}-${plan.company}-${plan.group}-${formatDate(plan.due)}`}
               readOnly
             />
           </Field>
           <Field l="KAYIT TARİHİ">
-            <input value={today} readOnly />
+            <input value={formatDate(today)} readOnly />
           </Field>
           <Field l="ÜLKE">
             <input value="TÜRKİYE" readOnly />
@@ -2453,7 +2709,7 @@ function Payment({
             <input value="GENEL MERKEZ" readOnly />
           </Field>
           <Field l="ÖDENEN TARİHİ">
-            <input value={today} readOnly />
+            <input value={formatDate(today)} readOnly />
           </Field>
           <Field l="ÖDENEN GRUP">
             <input value="PARTNER ÖDEMESİ" readOnly />
