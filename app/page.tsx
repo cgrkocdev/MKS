@@ -57,6 +57,7 @@ export type Row = {
 };
 export type Plan = {
   lastPaidDate?: string;
+  entryDate?: string;
   salary?: string;
   id: number;
   company: string;
@@ -74,6 +75,7 @@ export type Plan = {
   installments?: number;
   description?: string;
   donationGap?: number;
+  account?: string;
 };
 type PlanInput = Omit<Plan, "id" | "paid" | "payment">;
 export type PaymentUnit = {
@@ -89,49 +91,40 @@ export type PaymentUnit = {
 };
 const today = new Date().toLocaleDateString("sv-SE"),
   branch = "YEDİRENK DERNEĞİ (GENEL MERKEZ)";
+let lastNumericId = Date.now() * 1000;
+const createNumericId = () => {
+  lastNumericId = Math.max(Date.now() * 1000, lastNumericId + 1);
+  return lastNumericId;
+};
 const isValidIsoDate = (value?: string) => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split("-").map(Number);
   const parsed = new Date(`${value}T00:00:00`);
   return parsed.getFullYear() === year && parsed.getMonth() + 1 === month && parsed.getDate() === day;
 };
-const accounts = [
-  {
-    name: "Merkez Nakit Kasa",
-    type: "NAKİT",
-    currency: "TRY",
+const accountTypes = ["NAKİT", "BANKA", "ÇEK", "SENET", "KREDİ KARTI"];
+const accountCurrencyLabels: Record<string, string> = {
+  TRY: "TL",
+  USD: "Dolar",
+  EUR: "Euro",
+};
+const accounts = ["TRY", "USD", "EUR"].flatMap((currency) =>
+  accountTypes.map((type) => ({
+    name: `${accountCurrencyLabels[currency]} ${type === "NAKİT" ? "Nakit Kasa" : type === "BANKA" ? "Banka Hesabı" : type}`,
+    type,
+    currency,
     opening: 0,
     reserved: 0,
-  },
-  {
-    name: "Ziraat Bankası • 1025",
-    type: "BANKA",
-    currency: "TRY",
-    opening: 0,
-    reserved: 0,
-  },
-  {
-    name: "Vakıf Katılım • 2048",
-    type: "BANKA",
-    currency: "TRY",
-    opening: 0,
-    reserved: 0,
-  },
-  {
-    name: "Dolar Nakit Kasa",
-    type: "NAKİT",
-    currency: "USD",
-    opening: 0,
-    reserved: 0,
-  },
-  {
-    name: "Euro Nakit Kasa",
-    type: "NAKİT",
-    currency: "EUR",
-    opening: 0,
-    reserved: 0,
-  },
-];
+  })),
+);
+const legacyAccountNames: Record<string, string> = {
+  "Merkez Nakit Kasa": "TL Nakit Kasa",
+  "Ziraat Bankası • 1025": "TL Banka Hesabı",
+  "Vakıf Katılım • 2048": "TL Banka Hesabı",
+  "Dolar Nakit Kasa": "Dolar Nakit Kasa",
+  "Euro Nakit Kasa": "Euro Nakit Kasa",
+};
+const normalizeAccountName = (name?: string) => name ? legacyAccountNames[name] ?? name : "";
 const movementTypes = [
   "--Seçiniz--",
   "YEDİRENK",
@@ -149,7 +142,21 @@ const paymentTypes = [
 ];
 const currencyTypes = ["TRY", "DOLAR", "EURO"];
 const currencyCode = (currency: string) =>
-  ({ DOLAR: "USD", EURO: "EUR" })[currency] ?? currency;
+  ({ TL: "TRY", DOLAR: "USD", EURO: "EUR" })[currency] ?? currency;
+const getAccountBalance = (rows: Row[], accountName: string, currency: string) =>
+  rows.reduce((balance, row) => {
+    if (row.movement === "VİRMAN") {
+      const source = normalizeAccountName(row.account);
+      const targetCurrency = currencyCode(row.targetCurrency ?? "");
+      const targetType = row.targetPayment ?? "NAKİT";
+      const target = accounts.find((item) => item.currency === targetCurrency && item.type === targetType)?.name;
+      if (source === accountName && currencyCode(row.currency) === currency) balance -= row.amount;
+      if (target === accountName && targetCurrency === currency) balance += row.targetAmount ?? 0;
+      return balance;
+    }
+    if (normalizeAccountName(row.account) !== accountName || currencyCode(row.currency) !== currency) return balance;
+    return balance + (row.movement === "ÇIKIŞ" ? -row.amount : row.amount);
+  }, 0);
 const isSterling = (currency?: string) =>
   currency === "GBP" || currency === "STERLİN";
 const fmt = (n: number, c = "TRY") =>
@@ -206,6 +213,51 @@ const partnerCatalog: Array<{
   { name: "ANADOLU YEDİRENK DERNEĞİ", country: "TÜRKİYE", region: "ANADOLU-1", status: "PASİF" },
 ];
 const partnerNames = partnerCatalog.map((partner) => partner.name);
+export const planningGroupTypes: Record<string, string[]> = {
+  PARTNER: partnerNames,
+  "CARİ GİDERLER": [
+    "KİRA",
+    "AİDAT",
+    "MUHASEBE",
+    "BANKA MASRAFLARI",
+    "VERGİ VE HARÇLAR",
+    "SİGORTA",
+    "KARGO VE KURYE",
+    "DİĞER CARİ GİDER",
+  ],
+  FATURALAR: [
+    "ELEKTRİK",
+    "SU",
+    "DOĞALGAZ",
+    "İNTERNET",
+    "TELEFON",
+    "MOBİL HAT",
+    "YAKIT",
+    "DİĞER FATURA",
+  ],
+  "PERSONEL GİDERLERİ": [
+    "MAAŞ",
+    "SGK PRİMİ",
+    "YOL",
+    "YEMEK",
+    "AVANS",
+    "PRİM / İKRAMİYE",
+    "TAZMİNAT",
+    "DİĞER PERSONEL GİDERİ",
+  ],
+  "ALIŞVERİŞ": [
+    "OFİS MALZEMESİ",
+    "TEMİZLİK MALZEMESİ",
+    "GIDA",
+    "DEMİRBAŞ",
+    "TEKNOLOJİ",
+    "MOBİLYA",
+    "BAKIM / ONARIM",
+    "DİĞER ALIŞVERİŞ",
+  ],
+};
+export const planningGroups = Object.keys(planningGroupTypes);
+const planningTypeNames = Object.values(planningGroupTypes).flat();
 const partnerNameAliases: Record<string, string> = {
     "BERR GLOBAL UGANDA": "BERR GLOBAL",
     "CHASHM-E-OMID CHARITY ORGANIZATION": "CHASM-E-OMİD",
@@ -215,7 +267,7 @@ const plansSeed: Plan[] = [
   {
     id: 1,
     company: "BERR GLOBAL",
-    type: "SU KUYUSU",
+    type: "PARTNER",
     group: "ÇEŞMELİ",
     invoiceDate: "2026-07-31",
     due: "2026-07-31",
@@ -230,7 +282,7 @@ const plansSeed: Plan[] = [
   {
     id: 2,
     company: "BERR GLOBAL",
-    type: "SU KUYUSU",
+    type: "PARTNER",
     group: "TULUMBA",
     invoiceDate: "2026-07-31",
     due: "2026-07-31",
@@ -245,7 +297,7 @@ const plansSeed: Plan[] = [
   {
     id: 3,
     company: "BERR GLOBAL",
-    type: "KURBAN",
+    type: "PARTNER",
     group: "NAFİLE KURBAN",
     invoiceDate: "2026-06-30",
     due: "2026-06-30",
@@ -260,7 +312,7 @@ const plansSeed: Plan[] = [
   {
     id: 4,
     company: "CHASM-E-OMİD",
-    type: "KALICI ESERLER",
+    type: "PARTNER",
     group: "CAMİ İNŞAATI",
     invoiceDate: "2026-09-15",
     due: "2026-09-30",
@@ -274,7 +326,7 @@ const plansSeed: Plan[] = [
   },
 ];
 const rowsSeed: Row[] = [];
-const paymentUnitsSeed: PaymentUnit[] = partnerCatalog.map((partner, index) => ({
+const partnerUnitsSeed: PaymentUnit[] = partnerCatalog.map((partner, index) => ({
   id: 101 + index,
   scope: "Genel",
   group: "PARTNER",
@@ -285,12 +337,30 @@ const paymentUnitsSeed: PaymentUnit[] = partnerCatalog.map((partner, index) => (
   phone: "",
   status: partner.status,
 }));
-const completePartnerUnits = (saved: unknown): PaymentUnit[] => {
+const expenseUnitsSeed: PaymentUnit[] = planningGroups
+  .filter((group) => group !== "PARTNER")
+  .flatMap((group, groupIndex) =>
+    planningGroupTypes[group].map((name, typeIndex) => ({
+      id: 1000 + groupIndex * 100 + typeIndex,
+      scope: "Genel",
+      group,
+      name,
+      branch,
+      country: "",
+      region: "",
+      phone: "",
+      status: "AKTİF" as PaymentUnit["status"],
+    })),
+  );
+const paymentUnitsSeed: PaymentUnit[] = [...partnerUnitsSeed, ...expenseUnitsSeed];
+const completePaymentUnits = (saved: unknown): PaymentUnit[] => {
   const savedUnits = Array.isArray(saved) ? saved as PaymentUnit[] : [];
   return paymentUnitsSeed.map((catalogUnit) => {
-    const stored = savedUnits.find((unit) => unit?.name === catalogUnit.name);
+    const stored = savedUnits.find(
+      (unit) => unit?.name === catalogUnit.name && unit?.group === catalogUnit.group,
+    );
     return stored
-      ? { ...stored, name: catalogUnit.name, group: "PARTNER", country: catalogUnit.country, region: catalogUnit.region }
+      ? { ...stored, name: catalogUnit.name, group: catalogUnit.group, country: catalogUnit.country, region: catalogUnit.region }
       : catalogUnit;
   });
 };
@@ -312,14 +382,20 @@ export default function Home() {
   }, []);
   useEffect(() => {
     try {
-      const savedRows = localStorage.getItem("mks-cash-rows");
-      const savedPlans = localStorage.getItem("mks-payment-plans");
+      const snapshot = JSON.parse(localStorage.getItem("mks-finance-snapshot") ?? "null") as { rows?: Row[]; plans?: Plan[] } | null;
+      const savedRows = snapshot?.rows ? JSON.stringify(snapshot.rows) : localStorage.getItem("mks-cash-rows");
+      const savedPlans = snapshot?.plans ? JSON.stringify(snapshot.plans) : localStorage.getItem("mks-payment-plans");
       if (savedRows) {
         const storedRows = JSON.parse(savedRows) as Row[];
         setRows(
-          storedRows.filter(
-            (row) => !isSterling(row.currency) && !isSterling(row.targetCurrency),
-          ),
+          storedRows
+            .filter((row) => !isSterling(row.currency) && !isSterling(row.targetCurrency))
+            .map((row) => ({
+              ...row,
+              account: normalizeAccountName(row.account),
+              payment: normalizeAccountName(row.payment),
+              targetPayment: row.targetPayment ? normalizeAccountName(row.targetPayment) : row.targetPayment,
+            })),
         );
       }
       if (savedPlans) {
@@ -343,6 +419,10 @@ export default function Home() {
             return {
               ...plan,
               company: normalizePartnerName(plan.company),
+              account: normalizeAccountName(plan.account),
+              type: partnerNames.includes(normalizePartnerName(plan.company))
+                ? "PARTNER"
+                : plan.type,
               amount,
               paid,
               lastPaidDate: inferredPaymentDate,
@@ -350,21 +430,30 @@ export default function Home() {
             };
           }).filter(
             (plan) =>
-              partnerNames.includes(plan.company) && !isSterling(plan.currency),
+              planningTypeNames.includes(plan.company) && !isSterling(plan.currency),
           ),
         );
       }
     } catch {
       localStorage.removeItem("mks-cash-rows");
       localStorage.removeItem("mks-payment-plans");
+      localStorage.removeItem("mks-finance-snapshot");
     } finally {
       setDataReady(true);
     }
   }, []);
   useEffect(() => {
     if (!dataReady) return;
-    localStorage.setItem("mks-cash-rows", JSON.stringify(rows));
-    localStorage.setItem("mks-payment-plans", JSON.stringify(plans));
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.removeItem("mks-cash-rows");
+        localStorage.removeItem("mks-payment-plans");
+        localStorage.setItem("mks-finance-snapshot", JSON.stringify({ rows, plans }));
+      } catch {
+        setNotice("Kayıt alanı doldu. Verilerin kaybolmaması için CSV yedeği alın ve eski kayıtları arşivleyin.");
+      }
+    }, 200);
+    return () => window.clearTimeout(timer);
   }, [rows, plans, dataReady]);
   useEffect(() => {
     if (!notice) return;
@@ -431,11 +520,6 @@ export default function Home() {
               />
               <Sub
                 text="Kasa Virman"
-                on={page === "transfer"}
-                click={() => go("transfer")}
-              />
-              <Sub
-                text="Kasa Virman Döviz"
                 on={page === "currency"}
                 click={() => go("currency")}
               />
@@ -536,6 +620,7 @@ export default function Home() {
         <Payment
           plan={paying}
           transactions={rows.filter((row) => row.planId === paying.id)}
+          rows={rows}
           close={() => setPaying(null)}
           pay={(amount, account, note) => {
             const remaining = Math.max(0, paying.amount - paying.paid);
@@ -547,6 +632,7 @@ export default function Home() {
                   ? {
                       ...p,
                       paid: p.paid + paidAmount,
+                      account: p.account || account,
                       lastPaidDate: today,
                       payment: planStatus(p.amount, p.paid + paidAmount),
                     }
@@ -555,10 +641,10 @@ export default function Home() {
             );
             setRows([
               {
-                id: Date.now(),
+                id: createNumericId(),
                 date: today,
                 movement: "ÇIKIŞ",
-                payment: account,
+                payment: accounts.find((item) => item.name === account)?.type ?? "NAKİT",
                 account,
                 amount: paidAmount,
                 currency: paying.currency,
@@ -754,7 +840,7 @@ function title(p: Page) {
       home: "GENEL KASA",
       "cash-in": "KASA GİRİŞ",
       transfer: "KASA VİRMAN",
-      currency: "KASA VİRMAN DÖVİZ",
+      currency: "KASA VİRMAN",
       "cash-out": "KASA ÇIKIŞ",
       planning: "FİRMA ÖDEME PLANLAMA",
       ...reportTitles,
@@ -897,6 +983,42 @@ function Summary({ rows }: { rows: Row[] }) {
         </div>
         <small>Son güncelleme: {formatDate(today)}</small>
       </div>
+      <div className="all-cash-overview">
+        <div className="all-cash-overview-heading">
+          <div>
+            <span>TÜM KASALAR</span>
+            <h3>Kasa Toplamları</h3>
+          </div>
+          <small>Kullanılabilir tutar, nakit ve banka bakiyelerinin toplamıdır.</small>
+        </div>
+        <div className="all-cash-table-wrap">
+          <table className="all-cash-table">
+            <thead>
+              <tr>
+                <th>KASA</th>
+                <th>PARA BİRİMİ</th>
+                <th>TOPLAM TUTAR</th>
+                <th>KULLANILABİLİR TUTAR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {currencySummaries.map(({ currency, totals, availableBalance }) => (
+                <tr key={currency}>
+                  <td>
+                    <span className={`cash-currency-icon currency-${currency.toLowerCase()}`}>
+                      {{ TRY: "₺", USD: "$", EUR: "€" }[currency]}
+                    </span>
+                    <b>{{ TRY: "Türk Lirası Kasası", USD: "Dolar Kasası", EUR: "Euro Kasası" }[currency]}</b>
+                  </td>
+                  <td><span className="cash-currency-code">{currency}</span></td>
+                  <td>{fmt(totals.balance, currency)}</td>
+                  <td><strong>{fmt(availableBalance, currency)}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
       <div className="summary-card general-cash-summary">
         {currencySummaries.map(({ currency, data, totals, availableBalance }) => (
             <div className="summary-block" key={currency}>
@@ -1017,20 +1139,20 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
     endDate: "",
   };
   const [query, setQuery] = useState(emptyQuery);
-  const [appliedQuery, setAppliedQuery] = useState<typeof emptyQuery | null>(null);
-  const [tableCurrency, setTableCurrency] = useState("TÜMÜ");
+  const [appliedQuery, setAppliedQuery] = useState<typeof emptyQuery>({ ...emptyQuery });
   useEffect(() => {
     try {
-      if (localStorage.getItem("mks-payment-units-version") === "partner-catalog-2026-09-16") {
+      if (localStorage.getItem("mks-payment-units-version") === "planning-catalog-2026-09-30") {
         const saved = JSON.parse(localStorage.getItem("mks-payment-units") ?? "null");
-        setUnits(completePartnerUnits(saved));
+        setUnits(completePaymentUnits(saved));
       }
     } catch { /* Use the existing company list when storage cannot be read. */ }
   }, []);
-  const companies = [...partnerNames].sort((a, b) => a.localeCompare(b, "tr-TR"));
+  const companies = Array.from(new Set([...partnerNames, ...plans.map((plan) => plan.company)]))
+    .sort((a, b) => a.localeCompare(b, "tr-TR"));
   const options = (values: string[]) => ["TÜMÜ", ...Array.from(new Set(values.filter(Boolean))).sort()];
   const updateQuery = (key: keyof typeof emptyQuery, value: string) => setQuery((current) => ({ ...current, [key]: value }));
-  const visible = appliedQuery ? plans.filter((plan) => {
+  const visible = plans.filter((plan) => {
     const status = planStatus(plan.amount, plan.paid);
     return (appliedQuery.company === "TÜMÜ" || plan.company === appliedQuery.company)
       && (appliedQuery.year === "TÜMÜ" || plan.year === appliedQuery.year)
@@ -1039,15 +1161,13 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
       && (appliedQuery.status === "TÜMÜ" || status === appliedQuery.status)
       && (!appliedQuery.startDate || plan.due >= appliedQuery.startDate)
       && (!appliedQuery.endDate || plan.due <= appliedQuery.endDate);
-  }).sort((a, b) => b.due.localeCompare(a.due)) : [];
-  const currencyVisible = visible.filter(
-    (plan) => tableCurrency === "TÜMÜ" || currencyCode(plan.currency) === tableCurrency,
-  );
+  }).sort((a, b) => b.due.localeCompare(a.due));
+  const currencyVisible = visible;
   return (
     <section className="cash-out-panel">
       <div className="cash-out-heading">
         <div><span>KASA ÇIKIŞ</span><h2>Ödeme Planı Sorgulama</h2><p>Ödeme yapılacak firmaları ve planları tablo alanlarına göre sorgulayın.</p></div>
-        <div className="cash-out-result-badge"><Search /><span>{appliedQuery ? `${currencyVisible.length} sonuç` : "Sorgu bekleniyor"}</span></div>
+        <div className="cash-out-result-badge"><Search /><span>{currencyVisible.length} sonuç</span></div>
       </div>
       <div className="cash-out-query-card">
         <div className="cash-out-query-title"><Filter /><div><b>Sorgu Kriterleri</b><small>Bir veya birden fazla alan seçebilirsiniz.</small></div></div>
@@ -1062,13 +1182,9 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
           <Field l="SON ÖDEME BİTİŞ"><TurkishDateInput value={query.endDate} setValue={(value) => updateQuery("endDate", value)} /></Field>
         </div>
         <div className="cash-out-query-actions">
-          <button className="cash-out-clear" onClick={() => { setQuery(emptyQuery); setAppliedQuery(null); }}>Filtreleri Temizle</button>
+          <button className="cash-out-clear" onClick={() => { setQuery(emptyQuery); setAppliedQuery({ ...emptyQuery }); }}>Filtreleri Temizle</button>
           <button className="cash-out-search" onClick={() => setAppliedQuery({ ...query })}><Search /> Sorgula</button>
         </div>
-      </div>
-      <div className="table-currency-filter">
-        <div><b>PARA BİRİMİNE GÖRE LİSTELE</b><small>Tablo ve toplamlar seçilen para birimine göre güncellenir.</small></div>
-        <Select v={tableCurrency} set={setTableCurrency} o={["TÜMÜ", "TRY", "USD", "EUR"]} />
       </div>
       <div className="cash-out-table-wrap">
         <table className="cash-out-table">
@@ -1093,11 +1209,11 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
               <td>{fmt(plan.amount, plan.currency)}</td><td>{fmt(plan.paid, plan.currency)}</td><td>{fmt(remaining, plan.currency)}</td>
               <td><span className={paid ? "payment-state paid" : "payment-state pending"}>{planStatus(plan.amount, plan.paid)}</span></td>
             </tr>;
-          }) : <tr><td colSpan={9} className="none">{appliedQuery ? "Sorgu kriterlerine uygun ödeme planı bulunamadı." : "Sonuçları görmek için kriterleri seçip Sorgula butonuna basın."}</td></tr>}</tbody>
+          }) : <tr><td colSpan={9} className="none">Sorgu kriterlerine uygun ödeme planı bulunamadı.</td></tr>}</tbody>
           {currencyVisible.length ? <tfoot><tr className="table-total"><td colSpan={5}>TOPLAM</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.amount, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.paid, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => Math.max(0, plan.amount - plan.paid), (plan) => plan.currency)}</td><td /></tr></tfoot> : null}
         </table>
       </div>
-      <small className="cash-out-count">{appliedQuery ? `${currencyVisible.length} ödeme planı gösteriliyor` : "Henüz sorgu yapılmadı"}</small>
+      <small className="cash-out-count">{currencyVisible.length} ödeme planı gösteriliyor</small>
     </section>
   );
 }
@@ -1120,9 +1236,9 @@ function CashPage({
       account: "Merkez Nakit Kasa",
       received: "--Seçiniz--",
       sent: "--Seçiniz--",
-      rate: "0",
-      amount: "0",
-      paid: "0",
+      rate: "",
+      amount: "",
+      paid: "",
       currency: type === "currency" ? "TRY" : "TRY",
       targetCurrency: type === "currency" ? "DOLAR" : "EURO",
       debtName: "",
@@ -1131,7 +1247,9 @@ function CashPage({
     u = (k: string, v: string) => setF((current) => {
       const next = { ...current, [k]: v };
       if (type === "currency" && (k === "rate" || k === "amount")) {
-        next.paid = String(Math.round(Number(next.rate) * Number(next.amount) * 100) / 100);
+        next.paid = next.rate && next.amount
+          ? String(Math.round(Number(next.rate) * Number(next.amount) * 100) / 100)
+          : "";
       }
       return next;
     });
@@ -1141,8 +1259,8 @@ function CashPage({
   const [rateLoading, setRateLoading] = useState(false);
   const currencyTargets: Record<string, string[]> = {
     TRY: ["DOLAR", "EURO"],
-    DOLAR: ["TRY", "EURO"],
-    EURO: ["TRY", "DOLAR"],
+    DOLAR: ["TL", "EURO"],
+    EURO: ["TL", "DOLAR"],
   };
   const toFormCurrency = (currency?: string) => ({ USD: "DOLAR", EUR: "EURO" })[currency ?? ""] ?? currency ?? "TRY";
   const targetCurrencyOptions = currencyTargets[toFormCurrency(f.currency)] ?? ["DOLAR", "EURO"];
@@ -1157,7 +1275,9 @@ function CashPage({
       setF((current) => ({
         ...current,
         rate: String(data.rate),
-        paid: String(Math.round(data.rate! * Number(current.amount) * 100) / 100),
+        paid: current.amount
+          ? String(Math.round(data.rate! * Number(current.amount) * 100) / 100)
+          : "",
       }));
       setRateStatus(`${data.source} güncel kuru (${formatDate(data.date)})`);
     } catch (error) {
@@ -1227,7 +1347,7 @@ function CashPage({
     setFormError("");
     setRows([
         {
-          id: editingId ?? Date.now(),
+          id: editingId ?? createNumericId(),
           kind: type,
           movementType: f.movement,
           recordDate: rows.find((row) => row.id === editingId)?.recordDate ?? today,
@@ -1261,7 +1381,7 @@ function CashPage({
         ...rows.filter((row) => row.id !== editingId),
       ]);
     setEditingId(null);
-    setF((current) => ({ ...current, amount: "0", paid: "0", debtName: "", note: "" }));
+    setF((current) => ({ ...current, amount: "", paid: "", debtName: "", note: "" }));
   };
   const shown = rows.filter((r) => {
     const kind = r.kind ?? (r.movement === "ÇIKIŞ" ? "cash-out" : r.movement === "VİRMAN"
@@ -1308,7 +1428,7 @@ function CashPage({
                     <Field l="GÖNDEREN PARA BİRİMİ">
                       <Select
                         v={f.currency}
-                        set={(v) => setF((current) => ({ ...current, currency: v, targetCurrency: currencyTargets[v][0], rate: "0", paid: "0" }))}
+                        set={(v) => setF((current) => ({ ...current, currency: v, targetCurrency: currencyTargets[v][0], rate: "", paid: "" }))}
                         o={currencyTypes}
                       />
                     </Field>
@@ -1317,7 +1437,7 @@ function CashPage({
                       <Select
                         key={`target-${f.currency}`}
                         v={f.targetCurrency}
-                        set={(v) => setF((current) => ({ ...current, targetCurrency: v, rate: "0", paid: "0" }))}
+                        set={(v) => setF((current) => ({ ...current, targetCurrency: v, rate: "", paid: "" }))}
                         o={targetCurrencyOptions}
                       />
                       <div className="currency-target-options">
@@ -1326,7 +1446,7 @@ function CashPage({
                             type="button"
                             className={f.targetCurrency === currency ? "active" : ""}
                             key={currency}
-                            onClick={() => setF((current) => ({ ...current, targetCurrency: currency, rate: "0", paid: "0" }))}
+                            onClick={() => setF((current) => ({ ...current, targetCurrency: currency, rate: "", paid: "" }))}
                           >
                             {currency}
                           </button>
@@ -1437,7 +1557,7 @@ function CashPage({
             type === "transfer"
               ? "ÖDEME TÜRÜ KASA VİRMAN LİSTESİ"
               : type === "currency"
-                ? "KASA VİRMAN DÖVİZ LİSTESİ"
+                ? "KASA VİRMAN LİSTESİ"
                 : isIn
                   ? "KASA GİRİŞ LİSTESİ"
                   : "KASA ÇIKIŞ LİSTESİ"
@@ -1468,7 +1588,8 @@ function CashPosition({ rows }: { rows: Row[] }) {
         0,
       );
     const balance = account.opening + movementTotal;
-    return { ...account, balance, usable: balance - account.reserved };
+    const liquid = account.type === "NAKİT" || account.type === "BANKA";
+    return { ...account, balance, usable: liquid ? balance - account.reserved : 0 };
   });
   const tryAccounts = balances.filter((account) => account.currency === "TRY");
   const total = tryAccounts.reduce((sum, account) => sum + account.balance, 0);
@@ -1476,6 +1597,7 @@ function CashPosition({ rows }: { rows: Row[] }) {
     (sum, account) => sum + account.reserved,
     0,
   );
+  const available = tryAccounts.reduce((sum, account) => sum + account.usable, 0);
   return (
     <section className="cash-position">
       <div className="cash-position-title">
@@ -1503,7 +1625,7 @@ function CashPosition({ rows }: { rows: Row[] }) {
         </div>
         <div className="available">
           <small>KULLANILABİLİR KASA</small>
-          <strong>{fmt(total - reserved)}</strong>
+          <strong>{fmt(available)}</strong>
           <em>Serbest kullanılabilir bakiye</em>
         </div>
       </div>
@@ -1596,7 +1718,6 @@ function List({
   const [q, setQ] = useState("");
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
-  const [tableCurrency, setTableCurrency] = useState("TÜMÜ");
   const emptyFilters = {
     year: "--Seçiniz--",
     month: "--Seçiniz--",
@@ -1604,6 +1725,7 @@ function List({
     collectionDate: "",
     movement: "--Seçiniz--",
     payment: "--Seçiniz--",
+    currency: "--Seçiniz--",
   };
   const [filters, setFilters] = useState(emptyFilters);
   const [appliedFilters, setAppliedFilters] = useState(emptyFilters);
@@ -1635,11 +1757,10 @@ function List({
     if (appliedFilters.collectionDate && row.date !== appliedFilters.collectionDate) return false;
     if (appliedFilters.movement !== "--Seçiniz--" && (row.movementType ?? row.movement) !== appliedFilters.movement) return false;
     if (appliedFilters.payment !== "--Seçiniz--" && row.payment !== appliedFilters.payment && row.targetPayment !== appliedFilters.payment) return false;
+    if (appliedFilters.currency !== "--Seçiniz--" && currencyCode(row.currency) !== appliedFilters.currency) return false;
     return true;
   });
-  const currencyRows = shown.filter(
-    (row) => tableCurrency === "TÜMÜ" || currencyCode(row.currency) === tableCurrency,
-  );
+  const currencyRows = shown;
   return (
     <section className="list">
       <h2>{title}</h2>
@@ -1683,6 +1804,13 @@ function List({
               o={paymentTypes}
             />
           </Field>
+          <Field l="PARA BİRİMİ">
+            <Select
+              v={filters.currency}
+              set={(value) => setFilter("currency", value)}
+              o={["--Seçiniz--", "TRY", "USD", "EUR"]}
+            />
+          </Field>
           <button
             className="search"
             type="button"
@@ -1693,10 +1821,6 @@ function List({
         </div>
       </div>
       <Tools q={q} setQ={(value) => { setQ(value); setPage(1); }} pageSize={pageSize} setPageSize={(value) => { setPageSize(value); setPage(1); }} rows={currencyRows} />
-      <div className="table-currency-filter">
-        <div><b>PARA BİRİMİNE GÖRE LİSTELE</b><small>Tablo ve toplamlar seçilen para birimine göre güncellenir.</small></div>
-        <Select v={tableCurrency} set={(value) => { setTableCurrency(value); setPage(1); }} o={["TÜMÜ", "TRY", "USD", "EUR"]} />
-      </div>
       <div className="scroll">
         <table className="records">
           <thead>
@@ -1823,11 +1947,11 @@ function Planning({
   const [units, setUnits] = useState<PaymentUnit[]>(paymentUnitsSeed);
   const [unitsReady, setUnitsReady] = useState(false);
   useEffect(() => {
-    const catalogVersion = "partner-catalog-2026-09-16";
+    const catalogVersion = "planning-catalog-2026-09-30";
     if (localStorage.getItem("mks-payment-units-version") === catalogVersion) {
       const saved = localStorage.getItem("mks-payment-units");
       if (saved) {
-        try { setUnits(completePartnerUnits(JSON.parse(saved))); } catch { setUnits(paymentUnitsSeed); }
+        try { setUnits(completePaymentUnits(JSON.parse(saved))); } catch { setUnits(paymentUnitsSeed); }
       }
     } else {
       setUnits(paymentUnitsSeed);
@@ -1840,6 +1964,7 @@ function Planning({
     if (unitsReady) localStorage.setItem("mks-payment-units", JSON.stringify(units));
   }, [units, unitsReady]);
   const [plannedGroup, setPlannedGroup] = useState("PARTNER");
+  const [plannedType, setPlannedType] = useState("TÜMÜ");
   const [unitStatus, setUnitStatus] = useState("TÜMÜ");
   const [unitSearch, setUnitSearch] = useState("");
   const [firm, setFirm] = useState("BERR GLOBAL");
@@ -1849,12 +1974,12 @@ function Planning({
   const [orderFilter, setOrderFilter] = useState("--Seçiniz--");
   const [selectedPlans, setSelectedPlans] = useState<number[]>([]);
   const [deleteError, setDeleteError] = useState("");
-  const companies = plannedGroup === "PARTNER"
-    ? partnerNames
-    : Array.from(new Set([...units.map((unit) => unit.name), ...plans.map((plan) => plan.company)]));
+  const [showPlanArchive, setShowPlanArchive] = useState(false);
+  const companies = planningGroupTypes[plannedGroup] ?? [];
   const visibleUnits = units.filter(
     (unit) =>
       unit.group === plannedGroup &&
+      (plannedType === "TÜMÜ" || unit.name === plannedType) &&
       (unitStatus === "TÜMÜ" || unit.status === unitStatus) &&
       `${unit.name} ${unit.country} ${unit.region}`
         .toLocaleLowerCase("tr-TR")
@@ -1887,7 +2012,7 @@ function Planning({
     } else {
       setPlans([
         {
-          id: Date.now(),
+          id: createNumericId(),
           paid: 0,
           payment: "ÖDENMEDİ",
           ...data,
@@ -1915,7 +2040,7 @@ function Planning({
         </div>
         <div className="planning-master">
           <div className="plan-select">
-            <div className="filter-heading"><h3><Filter /> Filtrele</h3><button onClick={() => { setUnitStatus("TÜMÜ"); setPlannedGroup("PARTNER"); setUnitSearch(""); }}>Filtreleri Temizle</button></div>
+            <div className="filter-heading"><h3><Filter /> Filtrele</h3><button onClick={() => { setUnitStatus("TÜMÜ"); setPlannedGroup("PARTNER"); setPlannedType("TÜMÜ"); setFirm(partnerNames[0]); setUnitSearch(""); }}>Filtreleri Temizle</button></div>
             <Field l="ŞUBE (KAMPÜS) SORGU">
               <Select v={branch} set={() => {}} o={[branch]} />
             </Field>
@@ -1929,8 +2054,20 @@ function Planning({
             <Field l="PLANLANAN GRUP">
               <Select
                 v={plannedGroup}
-                set={setPlannedGroup}
-                o={["PARTNER"]}
+                set={(group) => {
+                  setPlannedGroup(group);
+                  setPlannedType("TÜMÜ");
+                  setFirm(planningGroupTypes[group]?.[0] ?? "");
+                  setSelectedPlans([]);
+                }}
+                o={planningGroups}
+              />
+            </Field>
+            <Field l="PLANLANAN TÜR">
+              <Select
+                v={plannedType}
+                set={setPlannedType}
+                o={["TÜMÜ", ...companies]}
               />
             </Field>
             <button
@@ -1941,6 +2078,13 @@ function Planning({
               }}
             >
               <Plus /> Ödeme Birimi Ekle
+            </button>
+            <button
+              className="plan-archive-toggle"
+              type="button"
+              onClick={() => setShowPlanArchive((visible) => !visible)}
+            >
+              {showPlanArchive ? "Plan Yönetimini Gizle" : `Plan Yönetimini Aç (${plans.length})`}
             </button>
           </div>
           <div className="unit-list">
@@ -1963,14 +2107,21 @@ function Planning({
                     <th>PLAN GRUP</th>
                     <th>ŞUBE ADI</th>
                     <th>FİRMA ADI</th>
+                    <th>FİYAT</th>
+                    <th>PLAN TARİHİ</th>
+                    <th>SON ÖDEME TARİHİ</th>
+                    <th>GİRİŞ TARİHİ</th>
                     <th>TELEFON</th>
                     <th>DURUMU</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleUnits.length ? (
-                    visibleUnits.map((unit) => (
-                      <tr key={unit.id}>
+                    visibleUnits.map((unit) => {
+                      const latestPlan = plans
+                        .filter((plan) => plan.company === unit.name && plan.type === unit.group)
+                        .sort((a, b) => (b.entryDate ?? b.invoiceDate).localeCompare(a.entryDate ?? a.invoiceDate))[0];
+                      return <tr key={unit.id}>
                         <td>
                           <button
                             className="mini red"
@@ -2010,15 +2161,19 @@ function Planning({
                         <td>{unit.group}</td>
                         <td>{unit.branch}</td>
                         <td>{unit.name}</td>
+                        <td>{latestPlan ? fmt(latestPlan.amount, latestPlan.currency) : "—"}</td>
+                        <td>{latestPlan ? formatDate(latestPlan.invoiceDate) : "—"}</td>
+                        <td>{latestPlan ? formatDate(latestPlan.due) : "—"}</td>
+                        <td>{latestPlan ? formatDate(latestPlan.entryDate ?? latestPlan.invoiceDate) : "—"}</td>
                         <td>{unit.phone || "-"}</td>
                         <td>
                           <span className="active-status">{unit.status}</span>
                         </td>
-                      </tr>
-                    ))
+                      </tr>;
+                    })
                   ) : (
                     <tr>
-                      <td colSpan={8} className="none">
+                      <td colSpan={12} className="none">
                         Bu gruba ait kayıt bulunamadı.
                       </td>
                     </tr>
@@ -2032,7 +2187,7 @@ function Planning({
           </div>
         </div>
       </section>
-      <section className="plan-list">
+      <section className="plan-list" hidden={!showPlanArchive}>
         <div className="plan-actions">
           <button
             className="delete"
@@ -2134,7 +2289,9 @@ function Planning({
                 <th>FİRMA</th>
                 <th>TÜRÜ</th>
                 <th>GRUP</th>
+                <th>KASA / HESAP</th>
                 <th>FATURA TARİHİ</th>
+                <th>GİRİŞ TARİHİ</th>
                 <th>FATURA ÖD. TARİHİ</th>
                 <th>YILLAR</th>
                 <th>FATURA AY</th>
@@ -2196,7 +2353,9 @@ function Planning({
                   <td>{p.company}</td>
                   <td>{p.type}</td>
                   <td>{p.group}</td>
+                  <td>{p.account || "—"}</td>
                   <td>{formatDate(p.invoiceDate)}</td>
+                  <td>{formatDate(p.entryDate ?? p.invoiceDate)}</td>
                   <td>{formatDate(p.due)}</td>
                   <td>{p.year}</td>
                   <td>{p.month}</td>
@@ -2221,7 +2380,7 @@ function Planning({
             {filtered.length ? (
               <tfoot>
                 <tr className="table-total">
-                  <td colSpan={9}>TOPLAM</td>
+                  <td colSpan={11}>TOPLAM</td>
                   <td>{totalsByCurrency(filtered, (plan) => plan.amount, (plan) => plan.currency)}</td>
                   <td>{totalsByCurrency(filtered, (plan) => plan.paid, (plan) => plan.currency)}</td>
                   <td>{totalsByCurrency(filtered, (plan) => Math.max(0, plan.amount - plan.paid), (plan) => plan.currency)}</td>
@@ -2251,11 +2410,16 @@ function Planning({
           defaultGroup={plannedGroup}
           defaultScope="Kampüs"
           initial={editingUnit ?? undefined}
+          initialPlan={editingUnit
+            ? plans
+                .filter((plan) => plan.company === editingUnit.name && plan.type === editingUnit.group)
+                .sort((a, b) => (b.entryDate ?? b.invoiceDate).localeCompare(a.entryDate ?? a.invoiceDate))[0]
+            : undefined}
           close={() => {
             setUnitShow(false);
             setEditingUnit(null);
           }}
-          save={(unit) => {
+          save={(unit, plan, planId) => {
             if (editingUnit) {
               setUnits(
                 units.map((item) =>
@@ -2265,10 +2429,27 @@ function Planning({
                 ),
               );
             } else {
-              setUnits([{ ...unit, id: Date.now() }, ...units]);
+              setUnits([{ ...unit, id: createNumericId() }, ...units]);
+            }
+            if (plan) {
+              if (planId) {
+                setPlans(plans.map((item) => item.id === planId
+                  ? {
+                      ...item,
+                      ...plan,
+                      paid: Math.min(item.paid, plan.amount),
+                      payment: planStatus(plan.amount, Math.min(item.paid, plan.amount)),
+                    }
+                  : item));
+              } else {
+                setPlans([
+                  { id: createNumericId(), paid: 0, payment: "ÖDENMEDİ", ...plan },
+                  ...plans,
+                ]);
+              }
             }
             setFirm(unit.name);
-            setPlannedGroup("PARTNER");
+            setPlannedGroup(unit.group);
             setUnitShow(false);
             setEditingUnit(null);
           }}
@@ -2284,16 +2465,18 @@ function PaymentUnitModal({
   defaultGroup,
   defaultScope,
   initial,
+  initialPlan,
 }: {
   close: () => void;
-  save: (unit: Omit<PaymentUnit, "id">) => void;
+  save: (unit: Omit<PaymentUnit, "id">, plan?: PlanInput, planId?: number) => void;
   defaultGroup: string;
   defaultScope: PaymentUnit["scope"];
   initial?: PaymentUnit;
+  initialPlan?: Plan;
 }) {
   const [form, setForm] = useState<Omit<PaymentUnit, "id">>({
     group: initial?.group ?? defaultGroup,
-    scope: initial?.scope ?? defaultScope,
+    scope: "Proje",
     name: initial?.name ?? "--Seçiniz--",
     branch: initial?.branch ?? branch,
     country: initial?.country ?? "--Seçiniz--",
@@ -2301,39 +2484,87 @@ function PaymentUnitModal({
     phone: initial?.phone ?? "",
     status: initial?.status ?? "AKTİF",
   });
+  const [planForm, setPlanForm] = useState({
+    amount: initialPlan ? String(initialPlan.amount) : "",
+    currency: initialPlan?.currency ?? "TRY",
+    invoiceDate: initialPlan?.invoiceDate ?? today,
+    entryDate: initialPlan?.entryDate ?? initialPlan?.invoiceDate ?? today,
+    due: initialPlan?.due ?? today,
+    order: initialPlan?.order ?? "BEKLİYOR",
+    description: initialPlan?.description ?? "",
+    account: initialPlan?.account ?? accounts.find((item) => item.currency === (initialPlan?.currency ?? "TRY"))?.name ?? "",
+  });
   const [error, setError] = useState("");
-  const countryPartners = partnerCatalog.filter(
-    (partner) => partner.country === form.country,
-  );
+  const hasCountrySelection = outgoingCountries.includes(form.country);
+  const countryPartners = hasCountrySelection
+    ? partnerCatalog.filter((partner) => partner.country === form.country)
+    : partnerCatalog;
   const countryRegions = Array.from(
     new Set(countryPartners.map((partner) => partner.region)),
   );
   const submit = () => {
-    if (!outgoingCountries.includes(form.country)) {
-      setError("Giden ülkeyi seçiniz.");
+    if (!(planningGroupTypes[form.group] ?? []).includes(form.name)) {
+      setError("Planlanan türü seçiniz.");
       return;
     }
-    if (!countryPartners.some((partner) => partner.name === form.name)) {
-      setError("Seçilen ülkeye ait partneri seçiniz.");
+    const amount = Number(planForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Planlanan ödeme tutarını giriniz.");
       return;
     }
-    if (!countryRegions.includes(form.region)) {
-      setError("Seçilen ülkeye ait bölgeyi seçiniz.");
+    if (!planForm.account) {
+      setError("Ödeme yapılacak kasa veya hesabı seçiniz.");
       return;
     }
-    save({ ...form, group: "PARTNER" });
+    if (!planForm.invoiceDate || !planForm.entryDate || !planForm.due) {
+      setError("Plan, giriş ve son ödeme tarihlerini seçiniz.");
+      return;
+    }
+    if (planForm.due < planForm.invoiceDate || planForm.due < planForm.entryDate) {
+      setError("Son ödeme tarihi, plan ve giriş tarihinden önce olamaz.");
+      return;
+    }
+    const date = new Date(`${planForm.due}T00:00:00`);
+    const months = ["OCAK", "ŞUBAT", "MART", "NİSAN", "MAYIS", "HAZİRAN", "TEMMUZ", "AĞUSTOS", "EYLÜL", "EKİM", "KASIM", "ARALIK"];
+    save(
+      { ...form, scope: "Proje" },
+      {
+        company: form.name,
+        type: form.group,
+        group: form.group === "PARTNER" ? form.region : form.name,
+        invoiceDate: planForm.invoiceDate,
+        entryDate: planForm.entryDate,
+        due: planForm.due,
+        year: String(date.getFullYear()),
+        month: months[date.getMonth()],
+        amount,
+        currency: planForm.currency,
+        order: planForm.order,
+        installments: 1,
+        description: planForm.description,
+        donationGap: 0,
+        account: planForm.account,
+      },
+      initialPlan?.id,
+    );
   };
   return (
-    <Modal title="FİRMA KAYIT GİRİŞ VE GÜNCELLEME FORMU" close={close}>
+    <Modal title={initial ? "ÖDEME PLANI VE BİRİM GÜNCELLEME FORMU" : "ÖDEME PLANLAMA VE KAYIT FORMU"} close={close}>
       <div className="company-modal-grid">
         <Field l="ŞUBE (KAMPÜS)">
           <Select v={branch} set={() => {}} o={[branch]} />
         </Field>
-        <Field l="ÖDENEN GRUP">
+        <Field l="PLANLANAN GRUP">
           <Select
             v={form.group}
-            set={(group) => setForm({ ...form, group })}
-            o={["PARTNER"]}
+            set={(group) => setForm({
+              ...form,
+              group,
+              name: planningGroupTypes[group]?.[0] ?? "",
+              country: group === "PARTNER" ? "--Seçiniz--" : "",
+              region: group === "PARTNER" ? "--Seçiniz--" : "",
+            })}
+            o={planningGroups}
           />
         </Field>
         <Field l="BİRİM TÜRÜ">
@@ -2342,10 +2573,10 @@ function PaymentUnitModal({
             set={(scope) =>
               setForm({ ...form, scope: scope as PaymentUnit["scope"] })
             }
-            o={["Kampüs", "Genel", "ÇBY", "Proje"]}
+            o={["Proje"]}
           />
         </Field>
-        <Field l="GİDEN ÜLKE">
+        {form.group === "PARTNER" ? <Field l="GİDEN ÜLKE (İSTEĞE BAĞLI)">
           <Select
             v={form.country}
             set={(country) => {
@@ -2360,15 +2591,15 @@ function PaymentUnitModal({
             }}
             o={["--Seçiniz--", ...outgoingCountries]}
           />
-        </Field>
-        <Field l="GİDEN BÖLGE">
+        </Field> : null}
+        {form.group === "PARTNER" ? <Field l="GİDEN BÖLGE (İSTEĞE BAĞLI)">
           <Select
             v={form.region}
             set={(region) => setForm({ ...form, region })}
             o={["--Seçiniz--", ...countryRegions]}
           />
-        </Field>
-        <Field l="FİRMA - (PARTNER) ADI">
+        </Field> : null}
+        <Field l={form.group === "PARTNER" ? "FİRMA - (PARTNER) ADI" : "PLANLANAN TÜR"}>
           <Select
             v={form.name}
             set={(name) => {
@@ -2376,14 +2607,17 @@ function PaymentUnitModal({
               setForm({
                 ...form,
                 name,
+                country: partner?.country ?? form.country,
                 region: partner?.region ?? form.region,
                 status: partner?.status ?? form.status,
               });
             }}
-            o={["--Seçiniz--", ...countryPartners.map((partner) => partner.name)]}
+            o={form.group === "PARTNER"
+              ? ["--Seçiniz--", ...countryPartners.map((partner) => partner.name)]
+              : planningGroupTypes[form.group] ?? []}
           />
         </Field>
-        <Field l="FİRMA TELEFON">
+        {form.group === "PARTNER" ? <Field l="FİRMA TELEFON (İSTEĞE BAĞLI)">
           <input
             type="tel"
             value={form.phone}
@@ -2392,9 +2626,71 @@ function PaymentUnitModal({
             }
             placeholder="+90 5__ ___ __ __"
           />
-        </Field>
+        </Field> : null}
+        <>
+          <Field l="PLANLANAN TUTAR">
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={planForm.amount}
+              onChange={(event) => setPlanForm({ ...planForm, amount: event.target.value })}
+              placeholder="Tutar giriniz"
+            />
+          </Field>
+          <Field l="PARA BİRİMİ">
+            <Select
+              v={planForm.currency}
+              set={(currency) => setPlanForm({
+                ...planForm,
+                currency,
+                account: accounts.find((item) => item.currency === currency)?.name ?? "",
+              })}
+              o={["TRY", "USD", "EUR"]}
+            />
+          </Field>
+          <Field l="ÖDEME YAPILACAK KASA / HESAP">
+            <Select
+              v={planForm.account}
+              set={(account) => setPlanForm({ ...planForm, account })}
+              o={accounts.filter((item) => item.currency === planForm.currency).map((item) => item.name)}
+            />
+          </Field>
+          <Field l="PLAN / FATURA TARİHİ">
+            <TurkishDateInput
+              value={planForm.invoiceDate}
+              setValue={(invoiceDate) => setPlanForm({ ...planForm, invoiceDate })}
+            />
+          </Field>
+          <Field l="GİRİŞ TARİHİ">
+            <TurkishDateInput
+              value={planForm.entryDate}
+              setValue={(entryDate) => setPlanForm({ ...planForm, entryDate })}
+            />
+          </Field>
+          <Field l="SON ÖDEME TARİHİ">
+            <TurkishDateInput
+              value={planForm.due}
+              setValue={(due) => setPlanForm({ ...planForm, due })}
+            />
+          </Field>
+          <Field l="SİPARİŞ / PLAN DURUMU">
+            <Select
+              v={planForm.order}
+              set={(order) => setPlanForm({ ...planForm, order })}
+              o={["BEKLİYOR", "VERİLMEDİ", "VERİLDİ"]}
+            />
+          </Field>
+          <Field l="AÇIKLAMA">
+            <input
+              value={planForm.description}
+              onChange={(event) => setPlanForm({ ...planForm, description: event.target.value })}
+              placeholder="Ödeme planı açıklaması"
+            />
+          </Field>
+        </>
       </div>
-      <fieldset className="company-status">
+      {form.group === "PARTNER" ? <fieldset className="company-status">
         <legend>AKTİF DURUMU</legend>
         <label>
           <input
@@ -2414,10 +2710,10 @@ function PaymentUnitModal({
           />{" "}
           PASİF
         </label>
-      </fieldset>
+      </fieldset> : null}
       {error ? <div className="company-error">{error}</div> : null}
       <button className="add company-save" onClick={submit}>
-        {initial ? "Güncelle" : "Kaydet"}
+        {initial ? "Planı ve Birimi Güncelle" : "Planı Kaydet"}
       </button>
     </Modal>
   );
@@ -2438,69 +2734,96 @@ function PlanModal({
   defaultCompany: string;
   defaultPaymentGroup: string;
 }) {
+  const initialPlanningGroup =
+    initial?.type && planningGroups.includes(initial.type)
+      ? initial.type
+      : partnerNames.includes(initial?.company ?? "")
+        ? "PARTNER"
+        : defaultPaymentGroup;
+  const availableTypes = planningGroupTypes[initialPlanningGroup] ?? companies;
   const [f, setF] = useState({
-    company: initial?.company ?? defaultCompany ?? companies[0] ?? "",
-    type: initial?.type ?? defaultPaymentGroup,
-    group: initial?.group ?? "NAFİLE KURBAN",
+    company: availableTypes.includes(initial?.company ?? "")
+      ? initial!.company
+      : availableTypes.includes(defaultCompany)
+        ? defaultCompany
+        : availableTypes[0] ?? "",
+    type: initialPlanningGroup,
+    group: initial?.group ?? "GENEL",
     invoiceDate: initial?.invoiceDate ?? today,
+    entryDate: initial?.entryDate ?? initial?.invoiceDate ?? today,
     due: initial?.due ?? today,
     year: initial?.year ?? "2026",
     month: initial?.month ?? "EYLÜL",
-    amount: initial?.amount ?? 0,
+    amount: initial ? String(initial.amount) : "",
     currency: initial?.currency ?? "USD",
     order: initial?.order ?? "BEKLİYOR",
     installments: initial?.installments ?? 1,
     description: initial?.description ?? "",
-    donationGap: initial?.donationGap ?? 0,
+    donationGap: initial?.donationGap ? String(initial.donationGap) : "",
+    account: initial?.account ?? accounts.find((item) => item.currency === (initial?.currency ?? "USD"))?.name ?? "",
   });
   const [error, setError] = useState("");
   const submitPlan = () => {
-    if (!Number.isFinite(f.amount) || f.amount <= 0) {
+    const amount = Number(f.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
       setError("Plan tutarı 0 olamaz. Ödenecek gerçek tutarı giriniz.");
       return;
     }
+    if (!f.account) {
+      setError("Ödeme yapılacak kasa veya hesabı seçiniz.");
+      return;
+    }
+    if (!f.invoiceDate || !f.entryDate || !f.due) {
+      setError("Plan, giriş ve son ödeme tarihlerini seçiniz.");
+      return;
+    }
+    if (f.due < f.invoiceDate || f.due < f.entryDate) {
+      setError("Son ödeme tarihi, plan ve giriş tarihinden önce olamaz.");
+      return;
+    }
     setError("");
-    save(f);
+    save({ ...f, amount, donationGap: Number(f.donationGap) || 0 });
   };
   return (
     <Modal title="ÖDEME PLANLAMA EKRANI" close={close}>
       <div className="modal-grid">
-        <Field l="ÖDENEN GRUP">
+        <Field l="PLANLANAN GRUP">
           <Select
             v={f.type}
-            set={(v) => setF({ ...f, type: v })}
-            o={Array.from(
-              new Set([
-                defaultPaymentGroup,
-                "AYNİ BAĞIŞ",
-                "PARTNER ÖDEMESİ",
-                "BURS",
-                "PERSONEL",
-                "SOSYAL",
-                "KURBAN",
-                "YETİM",
-              ]),
-            )}
+            set={(group) =>
+              setF({
+                ...f,
+                type: group,
+                company: planningGroupTypes[group]?.[0] ?? "",
+                group: group === "PARTNER" ? "GENEL" : planningGroupTypes[group]?.[0] ?? "GENEL",
+              })
+            }
+            o={planningGroups}
           />
         </Field>
-        <Field l="FİRMA ADI">
+        <Field l="TÜR">
           <Select
             v={f.company}
-            set={(v) => setF({ ...f, company: v })}
-            o={companies}
+            set={(v) => setF({ ...f, company: v, group: f.type === "PARTNER" ? f.group : v })}
+            o={planningGroupTypes[f.type] ?? []}
           />
         </Field>
         <Field l="FATURA TARİHİ">
           <TurkishDateInput value={f.invoiceDate} setValue={(value) => setF({ ...f, invoiceDate: value })} />
         </Field>
+        <Field l="GİRİŞ TARİHİ">
+          <TurkishDateInput value={f.entryDate} setValue={(value) => setF({ ...f, entryDate: value })} />
+        </Field>
         <Field l="FAT. ÖDEME TAR.">
           <TurkishDateInput value={f.due} setValue={(value) => setF({ ...f, due: value })} />
         </Field>
-        <Field l="PROJE(GRUP)">
+        <Field l="ALT TÜR / PROJE">
           <Select
             v={f.group}
             set={(v) => setF({ ...f, group: v })}
-            o={["NAFİLE KURBAN", "CAMİ İNŞAATI", "SU KUYUSU", "YETİM GİYİM"]}
+            o={f.type === "PARTNER"
+              ? ["GENEL", "NAFİLE KURBAN", "CAMİ İNŞAATI", "SU KUYUSU", "YETİM GİYİM"]
+              : [f.company]}
           />
         </Field>
         <Field l="BAĞIŞ AÇIĞI">
@@ -2509,9 +2832,7 @@ function PlanModal({
             min={0}
             step="0.01"
             value={f.donationGap}
-            onChange={(e) =>
-              setF({ ...f, donationGap: Math.max(0, Number(e.target.value)) })
-            }
+            onChange={(e) => setF({ ...f, donationGap: e.target.value })}
           />
         </Field>
         <Field l="ÖDEME AYI & BAŞLANGIÇ AYI">
@@ -2558,7 +2879,7 @@ function PlanModal({
             step="0.01"
             value={f.amount}
             onChange={(e) => {
-              setF({ ...f, amount: Number(e.target.value) });
+              setF({ ...f, amount: e.target.value });
               setError("");
             }}
           />
@@ -2566,8 +2887,19 @@ function PlanModal({
         <Field l="PARA BİRİMİ">
           <Select
             v={f.currency}
-            set={(v) => setF({ ...f, currency: v })}
+            set={(v) => setF({
+              ...f,
+              currency: v,
+              account: accounts.find((item) => item.currency === v)?.name ?? "",
+            })}
             o={["TRY", "USD", "EUR"]}
+          />
+        </Field>
+        <Field l="ÖDEME YAPILACAK KASA / HESAP">
+          <Select
+            v={f.account}
+            set={(account) => setF({ ...f, account })}
+            o={accounts.filter((item) => item.currency === f.currency).map((item) => item.name)}
           />
         </Field>
         <Field l="SİPARİŞ DURUMU">
@@ -2586,7 +2918,7 @@ function PlanModal({
       </div>
       <div className="plan-balance">
         <span>BAKİYE</span>
-        <strong>{fmt(f.donationGap, f.currency)}</strong>
+        <strong>{fmt(Number(f.donationGap) || 0, f.currency)}</strong>
       </div>
       {error ? <div className="payment-error">{error}</div> : null}
       <button className="add center" onClick={submitPlan}>
@@ -2598,22 +2930,29 @@ function PlanModal({
 function Payment({
   plan,
   transactions,
+  rows,
   close,
   pay,
 }: {
   plan: Plan;
   transactions: Row[];
+  rows: Row[];
   close: () => void;
   pay: (n: number, a: string, note: string) => void;
 }) {
   const remaining = Math.max(0, plan.amount - plan.paid);
   const [amount, setAmount] = useState(remaining),
-    [account, setAccount] = useState("--Seçiniz--"),
+    [account, setAccount] = useState(plan.account ?? "--Seçiniz--"),
     [note, setNote] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [showBalanceWarning, setShowBalanceWarning] = useState(false);
   const accountOptions = accounts
     .filter((item) => item.currency === plan.currency)
     .map((item) => item.name);
+  const currentBalance = account === "--Seçiniz--"
+    ? 0
+    : getAccountBalance(rows, account, currencyCode(plan.currency));
+  const projectedBalance = currentBalance - amount;
   const submitPayment = () => {
     if (account === "--Seçiniz--") {
       setError("Ödeme gönderilecek kasa veya banka hesabını seçiniz.");
@@ -2623,6 +2962,10 @@ function Payment({
       setError(
         `Ödeme tutarı 0'dan büyük ve en fazla ${fmt(remaining, plan.currency)} olabilir.`,
       );
+      return;
+    }
+    if (projectedBalance < 0) {
+      setShowBalanceWarning(true);
       return;
     }
     setError("");
@@ -2721,15 +3064,13 @@ function Payment({
             <input value={plan.group} readOnly />
           </Field>
           <Field l="ÖDEME GÖN. KASA">
-            <Select
-              v={account}
-              set={setAccount}
-              o={[
-                "--Seçiniz--",
-                ...accountOptions,
-                ...(accountOptions.length ? [] : [`${plan.currency} KASA`]),
-              ]}
-            />
+            {plan.account
+              ? <input value={plan.account} readOnly />
+              : <Select
+                  v={account}
+                  set={(value) => { setAccount(value); setShowBalanceWarning(false); }}
+                  o={["--Seçiniz--", ...accountOptions]}
+                />}
           </Field>
           <Field l="ÖDENEN KALEM">
             <Select v={plan.group} set={() => {}} o={[plan.group]} />
@@ -2747,6 +3088,7 @@ function Payment({
               onChange={(e) => {
                 setAmount(Number(e.target.value));
                 setError("");
+                setShowBalanceWarning(false);
               }}
             />
           </Field>
@@ -2758,6 +3100,20 @@ function Payment({
       <p className="payment-note">
         Not: Kısmi ödeme yapabilirsiniz. Girilen tutar kalan borcu aşamaz.
       </p>
+      {account !== "--Seçiniz--" ? <div className="payment-balance-preview">
+        <span>Mevcut bakiye: <b>{fmt(currentBalance, plan.currency)}</b></span>
+        <span>İşlem sonrası: <b className={projectedBalance < 0 ? "negative" : ""}>{fmt(projectedBalance, plan.currency)}</b></span>
+      </div> : null}
+      {showBalanceWarning ? <div className="inline-balance-warning" role="alert">
+        <div>
+          <strong>Kasa bakiyesi eksiye düşecek</strong>
+          <span>Bu ödeme sonrasında {account} bakiyesi {fmt(projectedBalance, plan.currency)} olacak. İşleme devam edilsin mi?</span>
+        </div>
+        <div>
+          <button type="button" onClick={() => setShowBalanceWarning(false)}>Hayır</button>
+          <button type="button" className="confirm" onClick={() => { setShowBalanceWarning(false); setError(""); pay(amount, account, note); }}>Evet, devam et</button>
+        </div>
+      </div> : null}
       {error ? <div className="payment-error">{error}</div> : null}
       <button
         className="exit payment-save"
@@ -2805,7 +3161,7 @@ function Modal({
         </div>
         {children}
         <button className="modal-close" onClick={close}>
-          Close
+          Kapat
         </button>
       </div>
     </div>

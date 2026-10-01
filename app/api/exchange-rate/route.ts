@@ -1,4 +1,5 @@
 const currencyAliases: Record<string, string> = {
+  TL: "TRY",
   DOLAR: "USD",
   EURO: "EUR",
 };

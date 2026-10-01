@@ -7,8 +7,8 @@ import { formatDate, TurkishDateInput } from "./date";
 export const reportTitles = {
   "report-in": "Kasa Giriş Raporu",
   "report-out": "Kasa Çıkış Raporu",
-  "report-company": "Firma Takip Raporu",
-  "report-company-month": "Firma (AY) Raporu",
+  "report-company": "Ödeme Planı Takip Raporu",
+  "report-company-month": "Ödeme Planı (AY) Raporu",
   "report-donation": "Bağış Raporu",
   "report-donation-month": "Bağış (AY) Raporu",
   "report-staff": "Personel Takip Raporu",
@@ -16,12 +16,20 @@ export const reportTitles = {
 } as const;
 export type ReportPage = keyof typeof reportTitles;
 const months = ["OCAK", "ŞUBAT", "MART", "NİSAN", "MAYIS", "HAZİRAN", "TEMMUZ", "AĞUSTOS", "EYLÜL", "EKİM", "KASIM", "ARALIK"];
+const planningGroupTypes: Record<string, string[]> = {
+  PARTNER: [],
+  "CARİ GİDERLER": ["KİRA", "AİDAT", "MUHASEBE", "BANKA MASRAFLARI", "VERGİ VE HARÇLAR", "SİGORTA", "KARGO VE KURYE", "DİĞER CARİ GİDER"],
+  FATURALAR: ["ELEKTRİK", "SU", "DOĞALGAZ", "İNTERNET", "TELEFON", "MOBİL HAT", "YAKIT", "DİĞER FATURA"],
+  "PERSONEL GİDERLERİ": ["MAAŞ", "SGK PRİMİ", "YOL", "YEMEK", "AVANS", "PRİM / İKRAMİYE", "TAZMİNAT", "DİĞER PERSONEL GİDERİ"],
+  ALIŞVERİŞ: ["OFİS MALZEMESİ", "TEMİZLİK MALZEMESİ", "GIDA", "DEMİRBAŞ", "TEKNOLOJİ", "MOBİLYA", "BAKIM / ONARIM", "DİĞER ALIŞVERİŞ"],
+};
+const planningGroups = Object.keys(planningGroupTypes);
 const code = (value: string) => ({ DOLAR: "USD", EURO: "EUR" })[value] ?? value;
 const money = (value: number, currency: string) => new Intl.NumberFormat("tr-TR", { style: "currency", currency: code(currency) }).format(value);
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "tr"));
-const blank = { group: "", country: "", region: "", company: "", year: "", month: "", invoiceStart: "", invoiceEnd: "", paymentStart: "", paymentEnd: "", currency: "", order: "", status: "", unpaid: false, detailed: false, byCompany: true };
+const blank = { group: "", planType: "", country: "", region: "", company: "", year: "", month: "", invoiceStart: "", invoiceEnd: "", paymentStart: "", paymentEnd: "", currency: "", order: "", status: "", unpaid: false, detailed: false, byCompany: true };
 type Filters = typeof blank;
-type Item = { id: string; company: string; country: string; region: string; group: string; type: string; project: string; date: string; paymentDate: string; year: string; month: string; currency: string; order: string; amount: number; paid: number; remaining: number; note: string };
+type Item = { id: string; company: string; country: string; region: string; group: string; type: string; project: string; account: string; date: string; paymentDate: string; year: string; month: string; currency: string; order: string; amount: number; paid: number; remaining: number; note: string };
 function Choice({ label, value, options, change }: { label: string; value: string; options: string[]; change: (value: string) => void }) {
   return <label className="report-field"><span>{label}</span><select value={value} onChange={(event) => change(event.target.value)}><option value="">--Seçiniz--</option>{options.map((option) => <option key={option}>{option}</option>)}</select></label>;
 }
@@ -38,29 +46,30 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
   const [feedback, setFeedback] = useState("");
   useEffect(() => {
     try {
-      if (localStorage.getItem("mks-payment-units-version") !== "partner-catalog-2026-09-16") return;
+      if (localStorage.getItem("mks-payment-units-version") !== "planning-catalog-2026-09-30") return;
       const saved = JSON.parse(localStorage.getItem("mks-payment-units") ?? "null");
       const stored = Array.isArray(saved) ? saved as PaymentUnit[] : [];
       setUnits(initialUnits.map((catalogUnit) => {
-        const match = stored.find((unit) => unit?.name === catalogUnit.name);
-        return match ? { ...match, name: catalogUnit.name, group: "PARTNER", country: catalogUnit.country, region: catalogUnit.region } : catalogUnit;
+        const match = stored.find((unit) => unit?.name === catalogUnit.name && unit?.group === catalogUnit.group);
+        return match ? { ...match, name: catalogUnit.name, group: catalogUnit.group, country: catalogUnit.country, region: catalogUnit.region } : catalogUnit;
       }));
     } catch { /* Retain the complete catalog. */ }
   }, [initialUnits]);
-  const update = (key: keyof Filters, value: string | boolean) => setDraft((current) => ({ ...current, [key]: value, ...(key === "country" ? { region: "", company: "" } : {}), ...(key === "group" ? { country: "", region: "", company: "" } : {}) }));
-  const unitOf = (company: string) => units.find((unit) => unit.name === company);
+  const update = (key: keyof Filters, value: string | boolean) => setDraft((current) => ({ ...current, [key]: value, ...(key === "country" ? { region: "", company: "" } : {}), ...(key === "group" ? { planType: "", country: "", region: "", company: "" } : {}) }));
+  const unitOf = (name: string, group?: string) => units.find((unit) => unit.name === name && (!group || unit.group === group));
   const items: Item[] = cash ? rows.filter((row) => type === "report-in" ? row.movement !== "ÇIKIŞ" && row.movement !== "VİRMAN" : row.movement === "ÇIKIŞ").map((row) => {
     const plan = plans.find((plan) => plan.id === row.planId);
-    const unit = plan ? unitOf(plan.company) : undefined;
-    return { id: `cash-${row.id}`, company: plan?.company ?? row.debtName ?? row.account, country: unit?.country ?? "", region: unit?.region ?? "", group: unit?.group ?? row.movementType ?? row.movement, type: row.payment, project: plan?.group ?? row.movement, date: row.date, paymentDate: row.date, year: row.date.slice(0, 4), month: months[Number(row.date.slice(5, 7)) - 1], currency: code(row.currency), order: plan?.order ?? "", amount: row.amount, paid: row.amount, remaining: 0, note: row.note };
+    const unit = plan ? unitOf(plan.company, plan.type) : undefined;
+    return { id: `cash-${row.id}`, company: plan?.company ?? row.debtName ?? row.account, country: unit?.country ?? "", region: unit?.region ?? "", group: plan?.type ?? row.movementType ?? row.movement, type: plan?.company ?? row.payment, project: plan?.group ?? row.movement, account: row.account, date: row.date, paymentDate: row.date, year: row.date.slice(0, 4), month: months[Number(row.date.slice(5, 7)) - 1], currency: code(row.currency), order: plan?.order ?? "", amount: row.amount, paid: row.amount, remaining: 0, note: row.note };
   }) : plans.map((plan) => {
-    const unit = unitOf(plan.company);
+    const unit = unitOf(plan.company, plan.type);
     const paymentDate = rows.filter((row) => row.planId === plan.id).map((row) => row.date).sort().at(-1) ?? plan.lastPaidDate ?? "";
-    return { id: `plan-${plan.id}`, company: plan.company, country: unit?.country ?? "", region: unit?.region ?? "", group: unit?.group ?? plan.type, type: plan.type, project: plan.group, date: plan.invoiceDate, paymentDate, year: plan.year, month: plan.month, currency: code(plan.currency), order: plan.order, amount: plan.amount, paid: plan.paid, remaining: Math.max(0, plan.amount - plan.paid), note: plan.description ?? "" };
-  }).filter((item) => type !== "report-staff" || item.group === "PERSONEL" || item.type === "PERSONEL");
+    return { id: `plan-${plan.id}`, company: plan.company, country: unit?.country ?? "", region: unit?.region ?? "", group: plan.type, type: plan.company, project: plan.group, account: plan.account ?? "", date: plan.invoiceDate, paymentDate, year: plan.year, month: plan.month, currency: code(plan.currency), order: plan.order, amount: plan.amount, paid: plan.paid, remaining: Math.max(0, plan.amount - plan.paid), note: plan.description ?? "" };
+  }).filter((item) => type !== "report-staff" || item.group === "PERSONEL GİDERLERİ");
   const status = (item: Item) => item.remaining <= 0 && item.amount > 0 ? "ÖDENDİ" : item.paid > 0 ? "KISMİ" : "ÖDENMEDİ";
   const selected = items.filter((item) => {
     for (const key of ["group", "country", "region", "company", "year", "month", "currency", "order"] as const) if (filters[key] && item[key] !== filters[key]) return false;
+    if (filters.planType && item.type !== filters.planType) return false;
     if (filters.unpaid && item.remaining <= 0) return false;
     if (filters.status && status(item) !== filters.status) return false;
     if (filters.invoiceStart && item.date < filters.invoiceStart || filters.invoiceEnd && item.date > filters.invoiceEnd) return false;
@@ -70,7 +79,7 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
   });
   const grouped = new Map<string, { key: string; first: Item; items: Item[]; amount: number; paid: number; remaining: number }>();
   selected.forEach((item) => {
-    const key = JSON.stringify([filters.detailed || cash ? item.id : "", item.country, filters.byCompany ? item.company : "", companySummary ? "" : item.type, companySummary ? "" : item.project, item.currency, monthly ? item.year : "", monthly ? item.month : ""]);
+    const key = JSON.stringify([filters.detailed || cash ? item.id : "", item.country, filters.byCompany ? item.company : "", companySummary ? "" : item.type, companySummary ? "" : item.project, item.account, item.currency, monthly ? item.year : "", monthly ? item.month : ""]);
     const entry = grouped.get(key) ?? { key, first: { ...item }, items: [], amount: 0, paid: 0, remaining: 0 };
     if (entry.first.type !== item.type) entry.first.type = "Birden fazla tür";
     if (entry.first.project !== item.project) entry.first.project = "Birden fazla grup";
@@ -82,18 +91,26 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
     setError(""); setFilters({ ...draft }); setExpanded(null);
   };
   const quick = (key: keyof Filters, value: string | boolean) => {
-    const dependentReset = key === "country" ? { company: "", region: "" } : key === "group" ? { country: "", company: "", region: "" } : {};
+    const dependentReset = key === "country" ? { company: "", region: "" } : key === "group" ? { planType: "", country: "", company: "", region: "" } : {};
     setDraft((current) => ({ ...current, [key]: value, ...dependentReset }));
     setFilters((current) => ({ ...current, [key]: value, ...dependentReset }));
     setExpanded(null);
   };
-  const choices = (key: "group" | "country" | "region" | "company" | "year" | "currency" | "order") => {
+  const choices = (key: "group" | "planType" | "country" | "region" | "company" | "year" | "currency" | "order") => {
+    if (key === "planType") {
+      if (draft.group === "PARTNER") {
+        return unique(units.filter((unit) => unit.group === "PARTNER").map((unit) => unit.name));
+      }
+      return draft.group && planningGroupTypes[draft.group]
+        ? planningGroupTypes[draft.group]
+        : unique(items.map((item) => item.type));
+    }
     const available = items.filter((item) => key !== "region" || !draft.country || item.country === draft.country).map((item) => item[key]);
     if (key === "group") {
       const visibleGroups = type === "report-in"
         ? available.filter((group) => group !== "DOLAR" && group !== "EURO")
         : available;
-      return unique([...visibleGroups, ...(type === "report-staff" ? ["PERSONEL"] : ["AYNİ", "BURS", "FİRMA", "GENEL", "PARTNER", "PERSONEL", "SOSYAL", "YETİM", "ZEKAT"])]);
+      return unique([...visibleGroups, ...(type === "report-staff" ? ["PERSONEL GİDERLERİ"] : planningGroups)]);
     }
     if (key === "country" && draft.group === "PARTNER") return unique(units.filter((unit) => unit.group === "PARTNER").map((unit) => unit.country));
     if (key === "company" && draft.group === "PARTNER") {
@@ -102,7 +119,7 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
     if (key === "year") return unique([...available, String(new Date().getFullYear())]);
     return unique(available);
   };
-  const exportData = () => [["Ülke", "Firma", "Tür", "Grup", "Yıl", "Ay", "Adet", "Toplam Tutar", "Ödenen", "Kalan", "Para Birimi"], ...result.map((row) => [row.first.country, filters.byCompany ? row.first.company : "Tüm firmalar", row.first.type, row.first.project, monthly || filters.detailed || cash ? row.first.year : "", monthly || filters.detailed || cash ? row.first.month : "", row.items.length, row.amount, row.paid, row.remaining, row.first.currency])];
+  const exportData = () => [["Planlanan Grup", "Planlanan Tür", "Ülke", "Bölge", "Alt Tür / Proje", "Kasa / Hesap", "Yıl", "Ay", "Adet", "Toplam Tutar", "Ödenen", "Kalan", "Para Birimi"], ...result.map((row) => [row.first.group, row.first.type, row.first.country, row.first.region, row.first.project, row.first.account, monthly || filters.detailed || cash ? row.first.year : "", monthly || filters.detailed || cash ? row.first.month : "", row.items.length, row.amount, row.paid, row.remaining, row.first.currency])];
   const download = () => {
     const csv = "\uFEFF" + exportData().map((row) => row.map((cell) => { const value = String(cell); return '"' + (/^[=+@-]/.test(value) ? "'" : "") + value.replaceAll('"', '""') + '"'; }).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const link = document.createElement("a"); link.href = url; link.download = `${type}.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -113,9 +130,9 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
     <div className="report-card report-filter-grid">
       <label className="report-field"><span>ŞUBE</span><div className="fixed-value">YEDİRENK DERNEĞİ (GENEL MERKEZ)</div></label>
       <Choice label="PLANLANAN GRUP" value={draft.group} options={choices("group")} change={(v) => update("group", v)} />
-      <Choice label="ÜLKE" value={draft.country} options={choices("country")} change={(v) => update("country", v)} />
-      <Choice label="İL / BÖLGE" value={draft.region} options={choices("region")} change={(v) => update("region", v)} />
-      <Choice label={cash ? "FİRMA / HESAP" : "PARTNER / FİRMA LİSTESİ"} value={draft.company} options={choices("company")} change={(v) => update("company", v)} />
+      <Choice label="PLANLANAN TÜR" value={draft.planType} options={choices("planType")} change={(v) => update("planType", v)} />
+      {(draft.group === "PARTNER" || (!draft.group && choices("country").length > 0)) && <Choice label="ÜLKE" value={draft.country} options={choices("country")} change={(v) => update("country", v)} />}
+      {(draft.group === "PARTNER" || (!draft.group && choices("region").length > 0)) && <Choice label="İL / BÖLGE" value={draft.region} options={choices("region")} change={(v) => update("region", v)} />}
       <Choice label="FAT. ÖDEME YILI" value={draft.year} options={choices("year")} change={(v) => update("year", v)} />
       <Choice label="FAT. ÖDEME AYI" value={draft.month} options={months} change={(v) => update("month", v)} />
       {([ ["invoiceStart", cash ? "İLK İŞLEM TARİHİ" : "İLK FATURA TARİHİ"], ["invoiceEnd", cash ? "SON İŞLEM TARİHİ" : "SON FATURA TARİHİ"], ["paymentStart", "İLK ÖDEME TARİHİ"], ["paymentEnd", "SON ÖDEME TARİHİ"]] as const).map(([key, label]) => <label key={key} className="report-field"><span>{label}</span><TurkishDateInput value={draft[key]} setValue={(value) => update(key, value)} /></label>)}
@@ -131,20 +148,18 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
       <div className="report-quick-grid">
         <Choice label="YIL" value={filters.year} options={choices("year")} change={(v) => quick("year", v)} />
         <Choice label="PLANLANAN GRUP" value={filters.group} options={choices("group")} change={(v) => quick("group", v)} />
-        {type === "report-out" || type === "report-in"
-          ? <Choice label="ÜLKE" value={filters.country} options={choices("country")} change={(v) => quick("country", v)} />
-          : <label className="report-check"><input type="checkbox" checked={filters.byCompany} onChange={(e) => quick("byCompany", e.target.checked)} /> Firma adına göre grupla</label>}
-        <Choice label="PARTNER / FİRMA" value={filters.company} options={choices("company")} change={(v) => quick("company", v)} />
+        <Choice label="PLANLANAN TÜR" value={filters.planType} options={filters.group === "PARTNER" ? unique(units.filter((unit) => unit.group === "PARTNER").map((unit) => unit.name)) : filters.group && planningGroupTypes[filters.group] ? planningGroupTypes[filters.group] : unique(items.map((item) => item.type))} change={(v) => quick("planType", v)} />
+        {filters.group === "PARTNER" && <Choice label="ÜLKE" value={filters.country} options={choices("country")} change={(v) => quick("country", v)} />}
         <Choice label="PARA BİRİMİ" value={filters.currency} options={["TRY", "USD", "EUR"]} change={(v) => quick("currency", v)} />
         <Choice label="SİPARİŞ DURUMU" value={filters.order} options={["BEKLİYOR", "VERİLDİ", "VERİLMEDİ"]} change={(v) => quick("order", v)} />
         <Choice label="ÖDEME DURUMU" value={filters.status} options={["ÖDENMEDİ", "KISMİ", "ÖDENDİ"]} change={(v) => { quick("status", v); if (v === "ÖDENDİ") quick("unpaid", false); }} />
       </div>
       <h3>{type.includes("donation") ? "Bağış Sipariş Tablosu" : reportTitles[type]}</h3>
       <div className="report-toolbar"><button onClick={async () => { try { await navigator.clipboard.writeText(exportData().map((row) => row.join("\t")).join("\n")); setFeedback("Kopyalandı."); } catch { setFeedback("Panoya erişilemedi; CSV indirebilirsiniz."); } }}>Kopyala</button><button onClick={download}>Excel (CSV)</button><button onClick={() => window.print()}>Yazdır</button><button onClick={() => { setDraft({ ...blank }); setFilters({ ...blank }); setSearch(""); setError(""); }}>Filtreleri Temizle</button><label>Arama <input value={search} onChange={(e) => setSearch(e.target.value)} /></label><span role="status">{feedback}</span></div>
-      <div className="report-table-wrap"><table className="report-table"><thead><tr>{["Detay", "Ülke", "Partner / Firma", "Tür", "Grup", ...(monthly || filters.detailed || cash ? ["Yıl / Ay"] : []), "Adet", cash ? "Toplam Tutar" : "Toplam Borç", "Toplam Ödenen", "Kalan Borç", "Para Birimi"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>
-        {result.map((row) => <Fragment key={row.key}><tr><td><button onClick={() => setExpanded(expanded === row.key ? null : row.key)} aria-expanded={expanded === row.key}>Detay Göster</button></td><td>{row.first.country || "—"}</td><td>{filters.byCompany ? row.first.company : "Tüm firmalar"}</td><td>{row.first.type}</td><td>{row.first.project}</td>{(monthly || filters.detailed || cash) && <td>{row.first.year} / {row.first.month}</td>}<td>{row.items.length}</td><td>{money(row.amount, row.first.currency)}</td><td>{money(row.paid, row.first.currency)}</td><td>{money(row.remaining, row.first.currency)}</td><td>{row.first.currency}</td></tr>{expanded === row.key && <tr><td colSpan={monthly || filters.detailed || cash ? 11 : 10}><div className="report-details">{row.items.map((item) => <p key={item.id}><strong>{item.company}</strong> · Tarih: {formatDate(item.date)} · Son ödeme: {formatDate(item.paymentDate) || "—"} · {money(item.amount, item.currency)} · Ödenen: {money(item.paid, item.currency)} · Kalan: {money(item.remaining, item.currency)} · {status(item)} {item.note && `· ${item.note}`}</p>)}</div></td></tr>}</Fragment>)}
-        {!result.length && <tr><td colSpan={monthly || filters.detailed || cash ? 11 : 10} className="none">Seçilen filtrelere uygun kayıt bulunamadı.</td></tr>}
-      </tbody>{result.length ? <tfoot>{Array.from(new Set(result.map((row) => row.first.currency))).map((currency) => { const currencyRows = result.filter((row) => row.first.currency === currency); return <tr className="table-total" key={currency}><td colSpan={monthly || filters.detailed || cash ? 6 : 5}>TOPLAM</td><td>{currencyRows.reduce((sum, row) => sum + row.items.length, 0)}</td><td>{money(currencyRows.reduce((sum, row) => sum + row.amount, 0), currency)}</td><td>{money(currencyRows.reduce((sum, row) => sum + row.paid, 0), currency)}</td><td>{money(currencyRows.reduce((sum, row) => sum + row.remaining, 0), currency)}</td><td>{currency}</td></tr>; })}</tfoot> : null}</table></div>
+      <div className="report-table-wrap"><table className="report-table"><thead><tr>{["Detay", "Planlanan Grup", "Planlanan Tür", "Ülke / Bölge", "Alt Tür / Proje", "Kasa / Hesap", ...(monthly || filters.detailed || cash ? ["Yıl / Ay"] : []), "Adet", cash ? "Toplam Tutar" : "Toplam Borç", "Toplam Ödenen", "Kalan Borç", "Para Birimi"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>
+        {result.map((row) => <Fragment key={row.key}><tr><td><button onClick={() => setExpanded(expanded === row.key ? null : row.key)} aria-expanded={expanded === row.key}>Detay Göster</button></td><td>{row.first.group || "—"}</td><td>{row.first.type || "—"}</td><td>{[row.first.country, row.first.region].filter(Boolean).join(" / ") || "—"}</td><td>{row.first.project || "—"}</td><td>{row.first.account || "—"}</td>{(monthly || filters.detailed || cash) && <td>{row.first.year} / {row.first.month}</td>}<td>{row.items.length}</td><td>{money(row.amount, row.first.currency)}</td><td>{money(row.paid, row.first.currency)}</td><td>{money(row.remaining, row.first.currency)}</td><td>{row.first.currency}</td></tr>{expanded === row.key && <tr><td colSpan={monthly || filters.detailed || cash ? 12 : 11}><div className="report-details">{row.items.map((item) => <p key={item.id}><strong>{item.type}</strong> · Grup: {item.group} · Kasa: {item.account || "—"} · Tarih: {formatDate(item.date)} · Son ödeme: {formatDate(item.paymentDate) || "—"} · {money(item.amount, item.currency)} · Ödenen: {money(item.paid, item.currency)} · Kalan: {money(item.remaining, item.currency)} · {status(item)} {item.note && `· ${item.note}`}</p>)}</div></td></tr>}</Fragment>)}
+        {!result.length && <tr><td colSpan={monthly || filters.detailed || cash ? 12 : 11} className="none">Seçilen filtrelere uygun kayıt bulunamadı.</td></tr>}
+      </tbody>{result.length ? <tfoot>{Array.from(new Set(result.map((row) => row.first.currency))).map((currency) => { const currencyRows = result.filter((row) => row.first.currency === currency); return <tr className="table-total" key={currency}><td colSpan={monthly || filters.detailed || cash ? 7 : 6}>TOPLAM</td><td>{currencyRows.reduce((sum, row) => sum + row.items.length, 0)}</td><td>{money(currencyRows.reduce((sum, row) => sum + row.amount, 0), currency)}</td><td>{money(currencyRows.reduce((sum, row) => sum + row.paid, 0), currency)}</td><td>{money(currencyRows.reduce((sum, row) => sum + row.remaining, 0), currency)}</td><td>{currency}</td></tr>; })}</tfoot> : null}</table></div>
       <p className="report-count">{selected.length} kayıt, {result.length} rapor satırı. Farklı para birimleri ayrı hesaplanır.</p>
     </div>
   </section>;

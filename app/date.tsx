@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 export const formatDate = (isoDate?: string) => {
   if (!isoDate) return "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return "";
@@ -22,40 +20,25 @@ export function TurkishDateInput({
   value: string;
   setValue: (value: string) => void;
 }) {
-  const [display, setDisplay] = useState(() => formatDate(value));
-
-  useEffect(() => setDisplay(formatDate(value)), [value]);
-
-  const update = (nextDisplay: string) => {
-    setDisplay(nextDisplay);
-    if (!nextDisplay) {
-      setValue("");
-      return;
-    }
-    const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(nextDisplay);
-    if (!match) return;
-    const [, day, month, year] = match;
-    const isoDate = `${year}-${month}-${day}`;
-    const parsed = new Date(`${isoDate}T00:00:00`);
-    if (
-      parsed.getFullYear() === Number(year) &&
-      parsed.getMonth() + 1 === Number(month) &&
-      parsed.getDate() === Number(day)
-    ) {
-      setValue(isoDate);
-    }
-  };
-
   return (
-    <input
-      type="text"
-      inputMode="numeric"
-      maxLength={10}
-      placeholder="GG-AA-YYYY"
-      aria-label="Tarih, gün-ay-yıl"
-      value={display}
-      onChange={(event) => update(event.target.value)}
-      onBlur={() => setDisplay(formatDate(value))}
-    />
+    <span className="turkish-date-picker">
+      <input
+        className="turkish-date-display"
+        type="text"
+        placeholder="GG-AA-YYYY"
+        aria-hidden="true"
+        tabIndex={-1}
+        readOnly
+        value={formatDate(value)}
+      />
+      <input
+        className="turkish-date-native"
+        type="date"
+        aria-label="Takvimden tarih seç"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <span className="turkish-date-icon" aria-hidden="true">📅</span>
+    </span>
   );
 }
