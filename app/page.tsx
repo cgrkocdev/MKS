@@ -381,6 +381,31 @@ export default function Home() {
     setAuthReady(true);
   }, []);
   useEffect(() => {
+    let stopped = false;
+    const checkVersion = async () => {
+      try {
+        const response = await fetch(`/api/version?t=${Date.now()}`, { cache: "no-store" });
+        if (!response.ok || stopped) return;
+        const { version } = await response.json() as { version?: string };
+        const loadedVersion = document.documentElement.dataset.buildVersion;
+        if (version && loadedVersion && version !== "local" && loadedVersion !== "local" && version !== loadedVersion) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("_v", version.slice(0, 12));
+          window.location.replace(url.toString());
+        }
+      } catch { /* Ağ yoksa mevcut sürüm çalışmaya devam eder. */ }
+    };
+    void checkVersion();
+    const timer = window.setInterval(checkVersion, 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") void checkVersion(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  useEffect(() => {
     try {
       const snapshot = JSON.parse(localStorage.getItem("mks-finance-snapshot") ?? "null") as { rows?: Row[]; plans?: Plan[] } | null;
       const savedRows = snapshot?.rows ? JSON.stringify(snapshot.rows) : localStorage.getItem("mks-cash-rows");
