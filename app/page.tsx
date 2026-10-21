@@ -632,7 +632,7 @@ export default function Home() {
                   ? {
                       ...p,
                       paid: p.paid + paidAmount,
-                      account: p.account || account,
+                      account,
                       lastPaidDate: today,
                       payment: planStatus(p.amount, p.paid + paidAmount),
                     }
@@ -1188,7 +1188,7 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
       </div>
       <div className="cash-out-table-wrap">
         <table className="cash-out-table">
-          <thead><tr>{["İşlem", "Son Ödeme Tarihi", "Ödenen Tarih", "Yıl", "Ay", "Tutar", "Ödenen", "Kalan", "Durum"].map((label) => <th key={label}>{label}</th>)}</tr></thead>
+          <thead><tr>{["İşlem", "Planlanan Grup", "Planlanan Tür / Firma", "Kasa / Hesap", "Giriş Tarihi", "Son Ödeme Tarihi", "Ödenen Tarih", "Yıl", "Ay", "Planlanan Tutar", "Ödenen", "Kalan", "Durum"].map((label) => <th key={label}>{label}</th>)}</tr></thead>
           <tbody>{currencyVisible.length ? currencyVisible.map((plan) => {
             const remaining = Math.max(0, Math.round((plan.amount - plan.paid) * 100) / 100);
             const paid = planStatus(plan.amount, plan.paid) === "ÖDENDİ";
@@ -1205,12 +1205,13 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
               : undefined;
             return <tr key={plan.id}>
               <td><button className="cash-out-pay" disabled={paid || remaining <= 0} title={paid ? "Bu ödeme tamamlandı" : "Ödeme formunu aç"} onClick={() => { if (!paid && remaining > 0) openPay(plan); }}>Ödeme Yap »</button></td>
+              <td>{plan.type}</td><td>{plan.company}</td><td>{plan.account || "—"}</td><td>{formatDate(plan.entryDate ?? plan.invoiceDate)}</td>
               <td>{formatDate(plan.due)}</td><td>{formatDate(lastPayment) || "—"}</td><td>{plan.year}</td><td>{plan.month}</td>
               <td>{fmt(plan.amount, plan.currency)}</td><td>{fmt(plan.paid, plan.currency)}</td><td>{fmt(remaining, plan.currency)}</td>
               <td><span className={paid ? "payment-state paid" : "payment-state pending"}>{planStatus(plan.amount, plan.paid)}</span></td>
             </tr>;
-          }) : <tr><td colSpan={9} className="none">Sorgu kriterlerine uygun ödeme planı bulunamadı.</td></tr>}</tbody>
-          {currencyVisible.length ? <tfoot><tr className="table-total"><td colSpan={5}>TOPLAM</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.amount, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.paid, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => Math.max(0, plan.amount - plan.paid), (plan) => plan.currency)}</td><td /></tr></tfoot> : null}
+          }) : <tr><td colSpan={13} className="none">Sorgu kriterlerine uygun ödeme planı bulunamadı.</td></tr>}</tbody>
+          {currencyVisible.length ? <tfoot><tr className="table-total"><td colSpan={9}>TOPLAM</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.amount, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => plan.paid, (plan) => plan.currency)}</td><td>{totalsByCurrency(currencyVisible, (plan) => Math.max(0, plan.amount - plan.paid), (plan) => plan.currency)}</td><td /></tr></tfoot> : null}
         </table>
       </div>
       <small className="cash-out-count">{currencyVisible.length} ödeme planı gösteriliyor</small>
@@ -3064,13 +3065,11 @@ function Payment({
             <input value={plan.group} readOnly />
           </Field>
           <Field l="ÖDEME GÖN. KASA">
-            {plan.account
-              ? <input value={plan.account} readOnly />
-              : <Select
-                  v={account}
-                  set={(value) => { setAccount(value); setShowBalanceWarning(false); }}
-                  o={["--Seçiniz--", ...accountOptions]}
-                />}
+            <Select
+              v={account}
+              set={(value) => { setAccount(value); setShowBalanceWarning(false); }}
+              o={["--Seçiniz--", ...accountOptions]}
+            />
           </Field>
           <Field l="ÖDENEN KALEM">
             <Select v={plan.group} set={() => {}} o={[plan.group]} />
