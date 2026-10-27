@@ -1,9 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  deploymentId:
+  deploymentId: (
     process.env.VERCEL_GIT_COMMIT_SHA ??
     process.env.NEXT_DEPLOYMENT_ID ??
-    "local",
+    "local"
+  ).slice(0, 32),
   async headers() {
     return [
       {
