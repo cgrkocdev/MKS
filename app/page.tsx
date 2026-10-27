@@ -709,6 +709,18 @@ export default function Home() {
   }, []);
   useEffect(() => {
     let stopped = false;
+    const clearObsoleteBrowserCaches = async () => {
+      try {
+        if ("serviceWorker" in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+        }
+        if ("caches" in window) {
+          const cacheNames = await caches.keys();
+          await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+        }
+      } catch { /* Eski tarayıcılarda normal akış devam eder. */ }
+    };
     const checkVersion = async () => {
       try {
         const response = await fetch(`/api/version?t=${Date.now()}`, { cache: "no-store" });
@@ -722,6 +734,7 @@ export default function Home() {
         }
       } catch { /* Ağ yoksa mevcut sürüm çalışmaya devam eder. */ }
     };
+    void clearObsoleteBrowserCaches();
     void checkVersion();
     const timer = window.setInterval(checkVersion, 60_000);
     const onVisible = () => { if (document.visibilityState === "visible") void checkVersion(); };
