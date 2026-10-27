@@ -5,7 +5,7 @@ const nextConfig = {
     process.env.VERCEL_GIT_COMMIT_SHA ??
     process.env.NEXT_DEPLOYMENT_ID ??
     "local"
-  ).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-32),
+  ).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32),
   async headers() {
     return [
       {
