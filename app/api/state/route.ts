@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
+import { isAuthenticated } from "../auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,7 @@ const noStoreHeaders = {
 };
 
 export async function GET() {
+  if (!await isAuthenticated()) return NextResponse.json({ error: "Oturum gerekli." }, { status: 401, headers: noStoreHeaders });
   try {
     const sql = await ensureState();
     const [state] = await sql`
@@ -70,6 +72,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  if (!await isAuthenticated()) return NextResponse.json({ error: "Oturum gerekli." }, { status: 401, headers: noStoreHeaders });
   try {
     const body = await request.json() as Partial<SharedState>;
     if (!Number.isInteger(body.revision) || !Array.isArray(body.rows) || !Array.isArray(body.plans) || !Array.isArray(body.units)) {

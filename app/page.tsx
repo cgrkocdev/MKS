@@ -711,8 +711,18 @@ export default function Home() {
   const saveTimerRef = useRef<number | null>(null);
   latestStateRef.current = { rows, plans, units };
   useEffect(() => {
-    setAuthenticated(localStorage.getItem("mks-session") === "active");
-    setAuthReady(true);
+    const restoreSession = async () => {
+      try {
+        const response = await fetch("/api/auth", { cache: "no-store" });
+        const result = await response.json() as { authenticated?: boolean };
+        setAuthenticated(Boolean(result.authenticated));
+      } catch {
+        setAuthenticated(false);
+      } finally {
+        setAuthReady(true);
+      }
+    };
+    void restoreSession();
   }, []);
   useEffect(() => {
     let stopped = false;
@@ -865,6 +875,7 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [rows, plans, dataReady]);
   useEffect(() => {
+    if (!authReady || !authenticated) return;
     let stopped = false;
     const applyRemote = (state: { revision: number; rows: Row[]; plans: Plan[]; units: PaymentUnit[] }) => {
       const sharedUnits = state.units.length ? completePaymentUnits(state.units) : paymentUnitsSeed;
@@ -905,7 +916,7 @@ export default function Home() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, []);
+  }, [authReady, authenticated]);
   useEffect(() => {
     if (!dataReady) return;
     const persist = async () => {
@@ -967,9 +978,17 @@ export default function Home() {
   if (!authenticated)
     return (
       <Login
-        onLogin={(remember) => {
-          if (remember) localStorage.setItem("mks-session", "active");
-          setAuthenticated(true);
+        onLogin={async (username, password, remember) => {
+          const response = await fetch("/api/auth", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password, remember }),
+          });
+          if (response.ok) {
+            setDataReady(false);
+            setAuthenticated(true);
+          }
+          return response.ok;
         }}
       />
     );
@@ -1092,8 +1111,8 @@ export default function Home() {
               className="logout"
               title="Çıkış yap"
               aria-label="Çıkış yap"
-              onClick={() => {
-                localStorage.removeItem("mks-session");
+              onClick={async () => {
+                await fetch("/api/auth", { method: "DELETE" });
                 setAuthenticated(false);
               }}
             >
@@ -1173,17 +1192,22 @@ export default function Home() {
   );
 }
 
-function Login({ onLogin }: { onLogin: (remember: boolean) => void }) {
+function Login({ onLogin }: { onLogin: (username: string, password: string, remember: boolean) => Promise<boolean> }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState("");
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (username.trim().toLowerCase() === "admin" && password === "MKS2026") {
-      setError("");
-      onLogin(remember);
+    try {
+      const accepted = await onLogin(username, password, remember);
+      if (accepted) {
+        setError("");
+        return;
+      }
+    } catch {
+      setError("Giriş servisine ulaşılamadı.");
       return;
     }
     setError("Kullanıcı adı veya şifre hatalı.");
