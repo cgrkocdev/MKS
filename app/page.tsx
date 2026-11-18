@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import mksLogo from "../public/mks-logo-clean.png";
 import Reports, { reportTitles, type ReportPage } from "./reports";
@@ -695,14 +695,21 @@ const completePaymentUnits = (saved: unknown): PaymentUnit[] => {
 export default function Home() {
   const [page, setPage] = useState<Page>("home"),
     [open, setOpen] = useState<"in" | "out" | "plan" | "reports" | null>(null),
-    [rows, setRows] = useState<Row[]>(rowsSeed),
-    [plans, setPlans] = useState<Plan[]>(plansSeed),
+    [rows, setRows] = useState<Row[]>([]),
+    [plans, setPlans] = useState<Plan[]>([]),
+    [units, setUnits] = useState<PaymentUnit[]>(paymentUnitsSeed),
     [paying, setPaying] = useState<Plan | null>(null),
     [notice, setNotice] = useState(""),
     [mobile, setMobile] = useState(false),
     [authenticated, setAuthenticated] = useState(false),
     [authReady, setAuthReady] = useState(false),
     [dataReady, setDataReady] = useState(false);
+  const revisionRef = useRef(0);
+  const remoteSignatureRef = useRef("");
+  const latestStateRef = useRef({ rows, plans, units });
+  const savingRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
+  latestStateRef.current = { rows, plans, units };
   useEffect(() => {
     setAuthenticated(localStorage.getItem("mks-session") === "active");
     setAuthReady(true);
@@ -746,6 +753,8 @@ export default function Home() {
     };
   }, []);
   useEffect(() => {
+    // Legacy tarayıcı verileri artık finansal kaynak olarak kullanılmıyor.
+    if (remoteSignatureRef.current !== "__legacy__") return;
     try {
       const needsTestFixtures = localStorage.getItem("mks-test-fixtures-v1") !== "done";
       const needsForeignFixtures = localStorage.getItem("mks-test-fixtures-v2") !== "done";
@@ -841,6 +850,8 @@ export default function Home() {
     }
   }, []);
   useEffect(() => {
+    // Merkezi veritabanına geçişten sonra localStorage'a finansal veri yazma.
+    if (remoteSignatureRef.current !== "__legacy__") return;
     if (!dataReady) return;
     const timer = window.setTimeout(() => {
       try {
@@ -853,6 +864,96 @@ export default function Home() {
     }, 200);
     return () => window.clearTimeout(timer);
   }, [rows, plans, dataReady]);
+  useEffect(() => {
+    let stopped = false;
+    const applyRemote = (state: { revision: number; rows: Row[]; plans: Plan[]; units: PaymentUnit[] }) => {
+      const sharedUnits = state.units.length ? completePaymentUnits(state.units) : paymentUnitsSeed;
+      const snapshot = { rows: state.rows, plans: state.plans, units: sharedUnits };
+      revisionRef.current = state.revision;
+      remoteSignatureRef.current = JSON.stringify(snapshot);
+      latestStateRef.current = snapshot;
+      setRows(snapshot.rows);
+      setPlans(snapshot.plans);
+      setUnits(snapshot.units);
+    };
+    const loadRemote = async (showFeedback = false) => {
+      try {
+        const response = await fetch(`/api/state?t=${Date.now()}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Ortak veriler alınamadı.");
+        const state = await response.json() as { revision: number; rows: Row[]; plans: Plan[]; units: PaymentUnit[] };
+        if (stopped) return;
+        applyRemote(state);
+        if (showFeedback) setNotice("Başka bilgisayardaki son değişiklikler yüklendi.");
+        ["mks-finance-snapshot", "mks-cash-rows", "mks-payment-plans", "mks-payment-units"].forEach((key) => localStorage.removeItem(key));
+      } catch {
+        if (!stopped) setNotice("Merkezi veritabanına ulaşılamadı. Bağlantıyı kontrol edin.");
+      } finally {
+        if (!stopped) setDataReady(true);
+      }
+    };
+    void loadRemote();
+    const timer = window.setInterval(() => {
+      const currentSignature = JSON.stringify(latestStateRef.current);
+      if (!savingRef.current && currentSignature === remoteSignatureRef.current) void loadRemote();
+    }, 5000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && !savingRef.current) void loadRemote(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  useEffect(() => {
+    if (!dataReady) return;
+    const persist = async () => {
+      if (savingRef.current) return;
+      const snapshot = latestStateRef.current;
+      const signature = JSON.stringify(snapshot);
+      if (signature === remoteSignatureRef.current) return;
+      savingRef.current = true;
+      try {
+        const response = await fetch("/api/state", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ revision: revisionRef.current, ...snapshot }),
+        });
+        if (response.status === 409) {
+          const latest = await fetch(`/api/state?t=${Date.now()}`, { cache: "no-store" });
+          if (!latest.ok) throw new Error();
+          const state = await latest.json() as { revision: number; rows: Row[]; plans: Plan[]; units: PaymentUnit[] };
+          const sharedUnits = state.units.length ? completePaymentUnits(state.units) : paymentUnitsSeed;
+          const remote = { rows: state.rows, plans: state.plans, units: sharedUnits };
+          revisionRef.current = state.revision;
+          remoteSignatureRef.current = JSON.stringify(remote);
+          latestStateRef.current = remote;
+          setRows(remote.rows);
+          setPlans(remote.plans);
+          setUnits(remote.units);
+          setNotice("Aynı anda başka bilgisayarda işlem yapıldı; güncel ortak veri yüklendi. Lütfen işlemi tekrar girin.");
+          return;
+        }
+        if (!response.ok) throw new Error();
+        const result = await response.json() as { revision: number };
+        revisionRef.current = result.revision;
+        remoteSignatureRef.current = signature;
+      } catch {
+        setNotice("Değişiklik merkezi veritabanına kaydedilemedi. Bağlantıyı kontrol edin.");
+      } finally {
+        savingRef.current = false;
+        if (JSON.stringify(latestStateRef.current) !== remoteSignatureRef.current) {
+          saveTimerRef.current = window.setTimeout(() => void persist(), 500);
+        }
+      }
+    };
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => void persist(), 300);
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
+  }, [rows, plans, units, dataReady]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 5000);
@@ -872,6 +973,7 @@ export default function Home() {
         }}
       />
     );
+  if (!dataReady) return <div className="auth-loading">Ortak veriler yükleniyor...</div>;
   return (
     <div className="shell">
       {mobile && <button className="menu-backdrop" aria-label="Menüyü kapat" onClick={() => setMobile(false)} />}
@@ -1001,13 +1103,13 @@ export default function Home() {
         </header>
         <div className="workspace">
           {page in reportTitles ? (
-            <Reports key={page} type={page as ReportPage} rows={rows} plans={plans} initialUnits={paymentUnitsSeed} />
+            <Reports key={page} type={page as ReportPage} rows={rows} plans={plans} units={units} />
           ) : page === "home" ? (
             <Summary rows={rows} />
           ) : page === "planning" ? (
-            <Planning plans={plans} setPlans={setPlans} openPay={setPaying} />
+            <Planning plans={plans} setPlans={setPlans} units={units} setUnits={setUnits} openPay={setPaying} />
           ) : page === "cash-out" ? (
-            <CashOut plans={plans} rows={rows} openPay={setPaying} />
+            <CashOut plans={plans} rows={rows} units={units} openPay={setPaying} />
           ) : (
             <CashPage key={page} type={page as "cash-in" | "transfer" | "currency"} rows={rows} setRows={setRows} />
           )}
@@ -1525,8 +1627,7 @@ function Summary({ rows }: { rows: Row[] }) {
   );
 }
 
-function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay: (plan: Plan) => void }) {
-  const [units, setUnits] = useState(paymentUnitsSeed);
+function CashOut({ plans, rows, units, openPay }: { plans: Plan[]; rows: Row[]; units: PaymentUnit[]; openPay: (plan: Plan) => void }) {
   const [advancedSearch, setAdvancedSearch] = useState("");
   const emptyQuery = {
     group: "TÜMÜ",
@@ -1544,14 +1645,6 @@ function CashOut({ plans, rows, openPay }: { plans: Plan[]; rows: Row[]; openPay
   };
   const [query, setQuery] = useState(emptyQuery);
   const [appliedQuery, setAppliedQuery] = useState<typeof emptyQuery>({ ...emptyQuery });
-  useEffect(() => {
-    try {
-      if (localStorage.getItem("mks-payment-units-version") === "planning-catalog-2026-09-30") {
-        const saved = JSON.parse(localStorage.getItem("mks-payment-units") ?? "null");
-        setUnits(completePaymentUnits(saved));
-      }
-    } catch { /* Use the existing company list when storage cannot be read. */ }
-  }, []);
   const availableGroups = Array.from(new Set([
     ...planningGroups,
     ...plans.map((plan) => plan.type).filter(Boolean),
@@ -2467,10 +2560,14 @@ function Tools({ q, setQ, pageSize, setPageSize, rows }: { q: string; setQ: (v: 
 function Planning({
   plans,
   setPlans,
+  units,
+  setUnits,
   openPay,
 }: {
   plans: Plan[];
   setPlans: (p: Plan[]) => void;
+  units: PaymentUnit[];
+  setUnits: (units: PaymentUnit[]) => void;
   openPay: (p: Plan) => void;
 }) {
   const [planShow, setPlanShow] = useState(false);
@@ -2478,25 +2575,6 @@ function Planning({
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
   const [editingUnit, setEditingUnit] = useState<PaymentUnit | null>(null);
   const [planCompany, setPlanCompany] = useState<string | null>(null);
-  const [units, setUnits] = useState<PaymentUnit[]>(paymentUnitsSeed);
-  const [unitsReady, setUnitsReady] = useState(false);
-  useEffect(() => {
-    const catalogVersion = "planning-catalog-2026-09-30";
-    if (localStorage.getItem("mks-payment-units-version") === catalogVersion) {
-      const saved = localStorage.getItem("mks-payment-units");
-      if (saved) {
-        try { setUnits(completePaymentUnits(JSON.parse(saved))); } catch { setUnits(paymentUnitsSeed); }
-      }
-    } else {
-      setUnits(paymentUnitsSeed);
-      localStorage.setItem("mks-payment-units", JSON.stringify(paymentUnitsSeed));
-      localStorage.setItem("mks-payment-units-version", catalogVersion);
-    }
-    setUnitsReady(true);
-  }, []);
-  useEffect(() => {
-    if (unitsReady) localStorage.setItem("mks-payment-units", JSON.stringify(units));
-  }, [units, unitsReady]);
   const [plannedGroup, setPlannedGroup] = useState("PARTNER");
   const [plannedType, setPlannedType] = useState("TÜMÜ");
   const [unitStatus, setUnitStatus] = useState("TÜMÜ");

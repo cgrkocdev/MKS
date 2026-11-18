@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Fragment } from "react";
+import { useState, Fragment } from "react";
 import type { Row, Plan, PaymentUnit } from "./page";
 import { formatDate, TurkishDateInput } from "./date";
 
@@ -35,11 +35,10 @@ type Item = { id: string; company: string; country: string; region: string; grou
 function Choice({ label, value, options, change }: { label: string; value: string; options: string[]; change: (value: string) => void }) {
   return <label className="report-field"><span>{label}</span><select value={value} onChange={(event) => change(event.target.value)}><option value="">--Seçiniz--</option>{options.map((option) => <option key={option}>{option}</option>)}</select></label>;
 }
-export default function Reports({ type, rows, plans, initialUnits }: { type: ReportPage; rows: Row[]; plans: Plan[]; initialUnits: PaymentUnit[] }) {
+export default function Reports({ type, rows, plans, units }: { type: ReportPage; rows: Row[]; plans: Plan[]; units: PaymentUnit[] }) {
   const cash = type === "report-in" || type === "report-out";
   const monthly = type.endsWith("-month");
   const companySummary = type === "report-firm" || type === "report-company" || type === "report-company-month" || type === "report-staff";
-  const [units, setUnits] = useState(initialUnits);
   const initialFilters: Filters = { ...blank, group: type === "report-firm" ? "PARTNER" : "", unpaid: type === "report-donation" };
   const [draft, setDraft] = useState<Filters>(initialFilters);
   const [filters, setFilters] = useState<Filters>(initialFilters);
@@ -47,17 +46,6 @@ export default function Reports({ type, rows, plans, initialUnits }: { type: Rep
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
-  useEffect(() => {
-    try {
-      if (localStorage.getItem("mks-payment-units-version") !== "planning-catalog-2026-09-30") return;
-      const saved = JSON.parse(localStorage.getItem("mks-payment-units") ?? "null");
-      const stored = Array.isArray(saved) ? saved as PaymentUnit[] : [];
-      setUnits(initialUnits.map((catalogUnit) => {
-        const match = stored.find((unit) => unit?.name === catalogUnit.name && unit?.group === catalogUnit.group);
-        return match ? { ...match, name: catalogUnit.name, group: catalogUnit.group, country: catalogUnit.country, region: catalogUnit.region } : catalogUnit;
-      }));
-    } catch { /* Retain the complete catalog. */ }
-  }, [initialUnits]);
   const update = (key: keyof Filters, value: string | boolean) => setDraft((current) => ({ ...current, [key]: value, ...(key === "country" ? { region: "", company: "" } : {}), ...(key === "group" ? { planType: "", country: "", region: "", company: "" } : {}) }));
   const unitOf = (name: string, group?: string) => units.find((unit) => unit.name === name && (!group || unit.group === group));
   const items: Item[] = cash ? rows.filter((row) => type === "report-in" ? row.movement !== "ÇIKIŞ" && row.movement !== "VİRMAN" : row.movement === "ÇIKIŞ").map((row) => {
